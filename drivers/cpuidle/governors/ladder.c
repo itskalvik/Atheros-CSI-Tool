@@ -15,11 +15,12 @@
 #include <linux/kernel.h>
 #include <linux/cpuidle.h>
 #include <linux/pm_qos.h>
-#include <linux/module.h>
 #include <linux/jiffies.h>
+#include <linux/tick.h>
+#include <linux/cpu.h>
 
 #include <asm/io.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 
 #define PROMOTION_COUNT 4
 #define DEMOTION_COUNT 1
@@ -67,9 +68,16 @@ static int ladder_select_state(struct cpuidle_driver *drv,
 				struct cpuidle_device *dev)
 {
 	struct ladder_device *ldev = this_cpu_ptr(&ladder_devices);
+	struct device *device = get_cpu_device(dev->cpu);
 	struct ladder_device_state *last_state;
 	int last_residency, last_idx = ldev->last_state_idx;
+	int first_idx = drv->states[0].flags & CPUIDLE_FLAG_POLLING ? 1 : 0;
 	int latency_req = pm_qos_request(PM_QOS_CPU_DMA_LATENCY);
+	int resume_latency = dev_pm_qos_raw_read_value(device);
+
+	if (resume_latency < latency_req &&
+	    resume_latency != PM_QOS_RESUME_LATENCY_NO_CONSTRAINT)
+		latency_req = resume_latency;
 
 	/* Special case when user has set very strict latency requirement */
 	if (unlikely(latency_req == 0)) {
@@ -96,13 +104,13 @@ static int ladder_select_state(struct cpuidle_driver *drv,
 	}
 
 	/* consider demotion */
-	if (last_idx > CPUIDLE_DRIVER_STATE_START &&
+	if (last_idx > first_idx &&
 	    (drv->states[last_idx].disabled ||
 	    dev->states_usage[last_idx].disable ||
 	    drv->states[last_idx].exit_latency > latency_req)) {
 		int i;
 
-		for (i = last_idx - 1; i > CPUIDLE_DRIVER_STATE_START; i--) {
+		for (i = last_idx - 1; i > first_idx; i--) {
 			if (drv->states[i].exit_latency <= latency_req)
 				break;
 		}
@@ -110,7 +118,7 @@ static int ladder_select_state(struct cpuidle_driver *drv,
 		return i;
 	}
 
-	if (last_idx > CPUIDLE_DRIVER_STATE_START &&
+	if (last_idx > first_idx &&
 	    last_residency < last_state->threshold.demotion_time) {
 		last_state->stats.demotion_count++;
 		last_state->stats.promotion_count = 0;
@@ -133,13 +141,14 @@ static int ladder_enable_device(struct cpuidle_driver *drv,
 				struct cpuidle_device *dev)
 {
 	int i;
+	int first_idx = drv->states[0].flags & CPUIDLE_FLAG_POLLING ? 1 : 0;
 	struct ladder_device *ldev = &per_cpu(ladder_devices, dev->cpu);
 	struct ladder_device_state *lstate;
 	struct cpuidle_state *state;
 
-	ldev->last_state_idx = CPUIDLE_DRIVER_STATE_START;
+	ldev->last_state_idx = first_idx;
 
-	for (i = CPUIDLE_DRIVER_STATE_START; i < drv->state_count; i++) {
+	for (i = first_idx; i < drv->state_count; i++) {
 		state = &drv->states[i];
 		lstate = &ldev->states[i];
 
@@ -151,7 +160,7 @@ static int ladder_enable_device(struct cpuidle_driver *drv,
 
 		if (i < drv->state_count - 1)
 			lstate->threshold.promotion_time = state->exit_latency;
-		if (i > CPUIDLE_DRIVER_STATE_START)
+		if (i > first_idx)
 			lstate->threshold.demotion_time = state->exit_latency;
 	}
 
@@ -176,7 +185,6 @@ static struct cpuidle_governor ladder_governor = {
 	.enable =	ladder_enable_device,
 	.select =	ladder_select_state,
 	.reflect =	ladder_reflect,
-	.owner =	THIS_MODULE,
 };
 
 /**
@@ -184,6 +192,14 @@ static struct cpuidle_governor ladder_governor = {
  */
 static int __init init_ladder(void)
 {
+	/*
+	 * When NO_HZ is disabled, or when booting with nohz=off, the ladder
+	 * governor is better so give it a higher rating than the menu
+	 * governor.
+	 */
+	if (!tick_nohz_enabled)
+		ladder_governor.rating = 25;
+
 	return cpuidle_register_governor(&ladder_governor);
 }
 

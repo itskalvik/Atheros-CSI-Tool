@@ -119,7 +119,6 @@ static const struct iio_chan_spec mcp4922_channels[3][MCP4922_NUM_CHANNELS] = {
 static const struct iio_info mcp4922_info = {
 	.read_raw = &mcp4922_read_raw,
 	.write_raw = &mcp4922_write_raw,
-	.driver_module = THIS_MODULE,
 };
 
 static int mcp4922_probe(struct spi_device *spi)
@@ -203,7 +202,6 @@ MODULE_DEVICE_TABLE(spi, mcp4922_id);
 static struct spi_driver mcp4922_driver = {
 	.driver = {
 		   .name = "mcp4922",
-		   .owner = THIS_MODULE,
 		   },
 	.probe = mcp4922_probe,
 	.remove = mcp4922_remove,

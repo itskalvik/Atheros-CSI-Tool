@@ -1,13 +1,10 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Userland implementation of gettimeofday() for 64 bits processes in a
  * s390 kernel for use in the vDSO
  *
  *  Copyright IBM Corp. 2008
  *  Author(s): Martin Schwidefsky (schwidefsky@de.ibm.com)
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License (version 2 only)
- * as published by the Free Software Foundation.
  */
 #include <asm/vdso.h>
 #include <asm/asm-offsets.h>
@@ -31,7 +28,16 @@ __kernel_gettimeofday:
 	jnz	0b
 	stcke	0(%r15)				/* Store TOD clock */
 	lg	%r1,1(%r15)
-	sg	%r1,__VDSO_XTIME_STAMP(%r5)	/* TOD - cycle_last */
+	lg	%r0,__VDSO_TS_END(%r5)		/* TOD steering end time */
+	slgr	%r0,%r1				/* now - ts_steering_end */
+	ltgr	%r0,%r0				/* past end of steering ? */
+	jm	6f
+	srlg	%r0,%r0,15			/* 1 per 2^16 */
+	tm	__VDSO_TS_DIR+3(%r5),0x01	/* steering direction? */
+	jz	7f
+	lcgr	%r0,%r0				/* negative TOD offset */
+7:	algr	%r1,%r0				/* add steering offset */
+6:	sg	%r1,__VDSO_XTIME_STAMP(%r5)	/* TOD - cycle_last */
 	msgf	%r1,__VDSO_TK_MULT(%r5)		/*  * tk->mult */
 	alg	%r1,__VDSO_XTIME_NSEC(%r5)	/*  + tk->xtime_nsec */
 	lg	%r0,__VDSO_XTIME_SEC(%r5)	/* tk->xtime_sec */

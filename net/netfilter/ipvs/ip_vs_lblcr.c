@@ -204,7 +204,7 @@ static inline struct ip_vs_dest *ip_vs_dest_set_min(struct ip_vs_dest_set *set)
 		      IP_VS_DBG_ADDR(least->af, &least->addr),
 		      ntohs(least->port),
 		      atomic_read(&least->activeconns),
-		      atomic_read(&least->refcnt),
+		      refcount_read(&least->refcnt),
 		      atomic_read(&least->weight), loh);
 	return least;
 }
@@ -249,7 +249,7 @@ static inline struct ip_vs_dest *ip_vs_dest_set_max(struct ip_vs_dest_set *set)
 		      __func__,
 		      IP_VS_DBG_ADDR(most->af, &most->addr), ntohs(most->port),
 		      atomic_read(&most->activeconns),
-		      atomic_read(&most->refcnt),
+		      refcount_read(&most->refcnt),
 		      atomic_read(&most->weight), moh);
 	return most;
 }
@@ -278,6 +278,7 @@ struct ip_vs_lblcr_table {
 	atomic_t                entries;        /* number of entries */
 	int                     max_size;       /* maximum size of entries */
 	struct timer_list       periodic_timer; /* collect stale entries */
+	struct ip_vs_service	*svc;		/* pointer back to service */
 	int                     rover;          /* rover for expire check */
 	int                     counter;        /* counter for no expire */
 	bool			dead;
@@ -415,8 +416,7 @@ static void ip_vs_lblcr_flush(struct ip_vs_service *svc)
 static int sysctl_lblcr_expiration(struct ip_vs_service *svc)
 {
 #ifdef CONFIG_SYSCTL
-	struct netns_ipvs *ipvs = net_ipvs(svc->net);
-	return ipvs->sysctl_lblcr_expiration;
+	return svc->ipvs->sysctl_lblcr_expiration;
 #else
 	return DEFAULT_EXPIRATION;
 #endif
@@ -459,10 +459,10 @@ static inline void ip_vs_lblcr_full_check(struct ip_vs_service *svc)
  *             of the table.
  *      The full expiration check is for this purpose now.
  */
-static void ip_vs_lblcr_check_expire(unsigned long data)
+static void ip_vs_lblcr_check_expire(struct timer_list *t)
 {
-	struct ip_vs_service *svc = (struct ip_vs_service *) data;
-	struct ip_vs_lblcr_table *tbl = svc->sched_data;
+	struct ip_vs_lblcr_table *tbl = from_timer(tbl, t, periodic_timer);
+	struct ip_vs_service *svc = tbl->svc;
 	unsigned long now = jiffies;
 	int goal;
 	int i, j;
@@ -520,7 +520,7 @@ static int ip_vs_lblcr_init_svc(struct ip_vs_service *svc)
 		return -ENOMEM;
 
 	svc->sched_data = tbl;
-	IP_VS_DBG(6, "LBLCR hash table (memory=%Zdbytes) allocated for "
+	IP_VS_DBG(6, "LBLCR hash table (memory=%zdbytes) allocated for "
 		  "current service\n", sizeof(*tbl));
 
 	/*
@@ -533,12 +533,12 @@ static int ip_vs_lblcr_init_svc(struct ip_vs_service *svc)
 	tbl->rover = 0;
 	tbl->counter = 1;
 	tbl->dead = 0;
+	tbl->svc = svc;
 
 	/*
 	 *    Hook periodic timer for garbage collection
 	 */
-	setup_timer(&tbl->periodic_timer, ip_vs_lblcr_check_expire,
-			(unsigned long)svc);
+	timer_setup(&tbl->periodic_timer, ip_vs_lblcr_check_expire, 0);
 	mod_timer(&tbl->periodic_timer, jiffies + CHECK_EXPIRE_INTERVAL);
 
 	return 0;
@@ -557,7 +557,7 @@ static void ip_vs_lblcr_done_svc(struct ip_vs_service *svc)
 
 	/* release the table itself */
 	kfree_rcu(tbl, rcu_head);
-	IP_VS_DBG(6, "LBLCR hash table (memory=%Zdbytes) released\n",
+	IP_VS_DBG(6, "LBLCR hash table (memory=%zdbytes) released\n",
 		  sizeof(*tbl));
 }
 
@@ -613,7 +613,7 @@ __ip_vs_lblcr_schedule(struct ip_vs_service *svc)
 		      IP_VS_DBG_ADDR(least->af, &least->addr),
 		      ntohs(least->port),
 		      atomic_read(&least->activeconns),
-		      atomic_read(&least->refcnt),
+		      refcount_read(&least->refcnt),
 		      atomic_read(&least->weight), loh);
 
 	return least;

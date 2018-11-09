@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _BCACHE_H
 #define _BCACHE_H
 
@@ -184,6 +185,7 @@
 #include <linux/mutex.h>
 #include <linux/rbtree.h>
 #include <linux/rwsem.h>
+#include <linux/refcount.h>
 #include <linux/types.h>
 #include <linux/workqueue.h>
 
@@ -243,19 +245,6 @@ struct keybuf {
 	DECLARE_ARRAY_ALLOCATOR(struct keybuf_key, freelist, KEYBUF_NR);
 };
 
-struct bio_split_pool {
-	struct bio_set		*bio_split;
-	mempool_t		*bio_split_hook;
-};
-
-struct bio_split_hook {
-	struct closure		cl;
-	struct bio_split_pool	*p;
-	struct bio		*bio;
-	bio_end_io_t		*bi_end_io;
-	void			*bi_private;
-};
-
 struct bcache_device {
 	struct closure		cl;
 
@@ -278,9 +267,6 @@ struct bcache_device {
 	atomic_t		*stripe_sectors_dirty;
 	unsigned long		*full_dirty_stripes;
 
-	unsigned long		sectors_dirty_last;
-	long			sectors_dirty_derivative;
-
 	struct bio_set		*bio_split;
 
 	unsigned		data_csum:1;
@@ -288,8 +274,6 @@ struct bcache_device {
 	int (*cache_miss)(struct btree *, struct search *,
 			  struct bio *, unsigned);
 	int (*ioctl) (struct bcache_device *, fmode_t, unsigned, unsigned long);
-
-	struct bio_split_pool	bio_split_hook;
 };
 
 struct io {
@@ -314,7 +298,7 @@ struct cached_dev {
 	struct semaphore	sb_write_mutex;
 
 	/* Refcount on the cache set. Always nonzero when we're caching. */
-	atomic_t		count;
+	refcount_t		count;
 	struct work_struct	detach;
 
 	/*
@@ -348,6 +332,7 @@ struct cached_dev {
 	/* Limit number of writeback bios in flight */
 	struct semaphore	in_flight;
 	struct task_struct	*writeback_thread;
+	struct workqueue_struct	*writeback_write_wq;
 
 	struct keybuf		writeback_keys;
 
@@ -376,12 +361,14 @@ struct cached_dev {
 
 	uint64_t		writeback_rate_target;
 	int64_t			writeback_rate_proportional;
-	int64_t			writeback_rate_derivative;
-	int64_t			writeback_rate_change;
+	int64_t			writeback_rate_integral;
+	int64_t			writeback_rate_integral_scaled;
+	int32_t			writeback_rate_change;
 
 	unsigned		writeback_rate_update_seconds;
-	unsigned		writeback_rate_d_term;
+	unsigned		writeback_rate_i_term_inverse;
 	unsigned		writeback_rate_p_term_inverse;
+	unsigned		writeback_rate_minimum;
 };
 
 enum alloc_reserve {
@@ -440,7 +427,7 @@ struct cache {
 	 * until a gc finishes - otherwise we could pointlessly burn a ton of
 	 * cpu
 	 */
-	unsigned		invalidate_needs_gc:1;
+	unsigned		invalidate_needs_gc;
 
 	bool			discard; /* Get rid of? */
 
@@ -454,8 +441,6 @@ struct cache {
 	atomic_long_t		meta_sectors_written;
 	atomic_long_t		btree_sectors_written;
 	atomic_long_t		sectors_written;
-
-	struct bio_split_pool	bio_split_hook;
 };
 
 struct gc_stat {
@@ -597,6 +582,7 @@ struct cache_set {
 	uint8_t			need_gc;
 	struct gc_stat		gc_stats;
 	size_t			nbuckets;
+	size_t			avail_nbuckets;
 
 	struct task_struct	*gc_thread;
 	/* Where in the btree gc currently is */
@@ -610,8 +596,8 @@ struct cache_set {
 
 	/* Counts how many sectors bio_insert has added to the cache */
 	atomic_t		sectors_to_gc;
+	wait_queue_head_t	gc_wait;
 
-	wait_queue_head_t	moving_gc_wait;
 	struct keybuf		moving_gc_keys;
 	/* Number of moving GC bios in flight */
 	struct semaphore	moving_in_flight;
@@ -822,13 +808,13 @@ do {									\
 
 static inline void cached_dev_put(struct cached_dev *dc)
 {
-	if (atomic_dec_and_test(&dc->count))
+	if (refcount_dec_and_test(&dc->count))
 		schedule_work(&dc->detach);
 }
 
 static inline bool cached_dev_get(struct cached_dev *dc)
 {
-	if (!atomic_inc_not_zero(&dc->count))
+	if (!refcount_inc_not_zero(&dc->count))
 		return false;
 
 	/* Paired with the mb in cached_dev_attach */
@@ -866,14 +852,14 @@ static inline void wake_up_allocators(struct cache_set *c)
 
 /* Forward declarations */
 
-void bch_count_io_errors(struct cache *, int, const char *);
+void bch_count_io_errors(struct cache *, blk_status_t, const char *);
 void bch_bbio_count_io_errors(struct cache_set *, struct bio *,
-			      int, const char *);
-void bch_bbio_endio(struct cache_set *, struct bio *, int, const char *);
+			      blk_status_t, const char *);
+void bch_bbio_endio(struct cache_set *, struct bio *, blk_status_t,
+		const char *);
 void bch_bbio_free(struct bio *, struct cache_set *);
 struct bio *bch_bbio_alloc(struct cache_set *);
 
-void bch_generic_make_request(struct bio *, struct bio_split_pool *);
 void __bch_submit_bbio(struct bio *, struct cache_set *);
 void bch_submit_bbio(struct bio *, struct cache_set *, struct bkey *, unsigned);
 

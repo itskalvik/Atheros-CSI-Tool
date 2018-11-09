@@ -1,13 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * bits.h - register bits of the ChipIdea USB IP core
  *
  * Copyright (C) 2008 Chipidea - MIPS Technologies, Inc. All rights reserved.
  *
  * Author: David Lopo
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  */
 
 #ifndef __DRIVERS_USB_CHIPIDEA_BITS_H
@@ -24,6 +21,9 @@
 #define REVISION	      (0xF << 21)
 #define VERSION		      (0xF << 25)
 #define CIVERSION	      (0x7 << 29)
+
+/* SBUSCFG */
+#define AHBBRST_MASK		0x7
 
 /* HCCPARAMS */
 #define HCCPARAMS_LEN         BIT(17)
@@ -52,6 +52,15 @@
 /* DEVICEADDR */
 #define DEVICEADDR_USBADRA    BIT(24)
 #define DEVICEADDR_USBADR     (0x7FUL << 25)
+
+/* TTCTRL */
+#define TTCTRL_TTHA_MASK	(0x7fUL << 24)
+/* Set non-zero value for internal TT Hub address representation */
+#define TTCTRL_TTHA		(0x7fUL << 24)
+
+/* BURSTSIZE */
+#define RX_BURST_MASK		0xff
+#define TX_BURST_MASK		0xff00
 
 /* PORTSC */
 #define PORTSC_CCS            BIT(0)

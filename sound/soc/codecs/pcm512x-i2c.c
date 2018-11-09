@@ -1,7 +1,7 @@
 /*
  * Driver for the PCM512x CODECs
  *
- * Author:	Mark Brown <broonie@linaro.org>
+ * Author:	Mark Brown <broonie@kernel.org>
  *		Copyright 2014 Linaro Ltd
  *
  * This program is free software; you can redistribute it and/or
@@ -67,7 +67,6 @@ static struct i2c_driver pcm512x_i2c_driver = {
 	.id_table	= pcm512x_i2c_id,
 	.driver		= {
 		.name	= "pcm512x",
-		.owner	= THIS_MODULE,
 		.of_match_table = pcm512x_of_match,
 		.pm     = &pcm512x_pm_ops,
 	},
@@ -76,5 +75,5 @@ static struct i2c_driver pcm512x_i2c_driver = {
 module_i2c_driver(pcm512x_i2c_driver);
 
 MODULE_DESCRIPTION("ASoC PCM512x codec driver - I2C");
-MODULE_AUTHOR("Mark Brown <broonie@linaro.org>");
+MODULE_AUTHOR("Mark Brown <broonie@kernel.org>");
 MODULE_LICENSE("GPL v2");

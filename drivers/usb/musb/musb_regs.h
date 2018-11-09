@@ -1,35 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * MUSB OTG driver register defines
  *
  * Copyright 2005 Mentor Graphics Corporation
  * Copyright (C) 2005-2006 by Texas Instruments
  * Copyright (C) 2006-2007 Nokia Corporation
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
- * 02110-1301 USA
- *
- * THIS SOFTWARE IS PROVIDED "AS IS" AND ANY EXPRESS OR IMPLIED
- * WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN
- * NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT,
- * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
- * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF
- * USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
- * ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
- * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
  */
 
 #ifndef __MUSB_REGS_H__
@@ -300,9 +275,6 @@
 #define MUSB_RXHUBADDR		0x06
 #define MUSB_RXHUBPORT		0x07
 
-#define MUSB_BUSCTL_OFFSET(_epnum, _offset) \
-	(0x80 + (8*(_epnum)) + (_offset))
-
 static inline void musb_write_txfifosz(void __iomem *mbase, u8 c_size)
 {
 	musb_writeb(mbase, MUSB_TXFIFOSZ, c_size);
@@ -364,78 +336,84 @@ static inline u16 musb_read_hwvers(void __iomem *mbase)
 	return musb_readw(mbase, MUSB_HWVERS);
 }
 
-static inline void __iomem *musb_read_target_reg_base(u8 i, void __iomem *mbase)
-{
-	return (MUSB_BUSCTL_OFFSET(i, 0) + mbase);
-}
-
-static inline void musb_write_rxfunaddr(void __iomem *ep_target_regs,
+static inline void musb_write_rxfunaddr(struct musb *musb, u8 epnum,
 		u8 qh_addr_reg)
 {
-	musb_writeb(ep_target_regs, MUSB_RXFUNCADDR, qh_addr_reg);
+	musb_writeb(musb->mregs,
+		    musb->io.busctl_offset(epnum, MUSB_RXFUNCADDR),
+		    qh_addr_reg);
 }
 
-static inline void musb_write_rxhubaddr(void __iomem *ep_target_regs,
+static inline void musb_write_rxhubaddr(struct musb *musb, u8 epnum,
 		u8 qh_h_addr_reg)
 {
-	musb_writeb(ep_target_regs, MUSB_RXHUBADDR, qh_h_addr_reg);
+	musb_writeb(musb->mregs, musb->io.busctl_offset(epnum, MUSB_RXHUBADDR),
+			qh_h_addr_reg);
 }
 
-static inline void musb_write_rxhubport(void __iomem *ep_target_regs,
+static inline void musb_write_rxhubport(struct musb *musb, u8 epnum,
 		u8 qh_h_port_reg)
 {
-	musb_writeb(ep_target_regs, MUSB_RXHUBPORT, qh_h_port_reg);
-}
-
-static inline void  musb_write_txfunaddr(void __iomem *mbase, u8 epnum,
-		u8 qh_addr_reg)
-{
-	musb_writeb(mbase, MUSB_BUSCTL_OFFSET(epnum, MUSB_TXFUNCADDR),
-			qh_addr_reg);
-}
-
-static inline void  musb_write_txhubaddr(void __iomem *mbase, u8 epnum,
-		u8 qh_addr_reg)
-{
-	musb_writeb(mbase, MUSB_BUSCTL_OFFSET(epnum, MUSB_TXHUBADDR),
-			qh_addr_reg);
-}
-
-static inline void  musb_write_txhubport(void __iomem *mbase, u8 epnum,
-		u8 qh_h_port_reg)
-{
-	musb_writeb(mbase, MUSB_BUSCTL_OFFSET(epnum, MUSB_TXHUBPORT),
+	musb_writeb(musb->mregs, musb->io.busctl_offset(epnum, MUSB_RXHUBPORT),
 			qh_h_port_reg);
 }
 
-static inline u8 musb_read_rxfunaddr(void __iomem *mbase, u8 epnum)
+static inline void musb_write_txfunaddr(struct musb *musb, u8 epnum,
+		u8 qh_addr_reg)
 {
-	return musb_readb(mbase, MUSB_BUSCTL_OFFSET(epnum, MUSB_RXFUNCADDR));
+	musb_writeb(musb->mregs,
+		    musb->io.busctl_offset(epnum, MUSB_TXFUNCADDR),
+		    qh_addr_reg);
 }
 
-static inline u8 musb_read_rxhubaddr(void __iomem *mbase, u8 epnum)
+static inline void musb_write_txhubaddr(struct musb *musb, u8 epnum,
+		u8 qh_addr_reg)
 {
-	return musb_readb(mbase, MUSB_BUSCTL_OFFSET(epnum, MUSB_RXHUBADDR));
+	musb_writeb(musb->mregs, musb->io.busctl_offset(epnum, MUSB_TXHUBADDR),
+			qh_addr_reg);
 }
 
-static inline u8 musb_read_rxhubport(void __iomem *mbase, u8 epnum)
+static inline void musb_write_txhubport(struct musb *musb, u8 epnum,
+		u8 qh_h_port_reg)
 {
-	return musb_readb(mbase, MUSB_BUSCTL_OFFSET(epnum, MUSB_RXHUBPORT));
+	musb_writeb(musb->mregs, musb->io.busctl_offset(epnum, MUSB_TXHUBPORT),
+			qh_h_port_reg);
 }
 
-static inline u8  musb_read_txfunaddr(void __iomem *mbase, u8 epnum)
+static inline u8 musb_read_rxfunaddr(struct musb *musb, u8 epnum)
 {
-	return musb_readb(mbase, MUSB_BUSCTL_OFFSET(epnum, MUSB_TXFUNCADDR));
+	return musb_readb(musb->mregs,
+			  musb->io.busctl_offset(epnum, MUSB_RXFUNCADDR));
 }
 
-static inline u8  musb_read_txhubaddr(void __iomem *mbase, u8 epnum)
+static inline u8 musb_read_rxhubaddr(struct musb *musb, u8 epnum)
 {
-	return musb_readb(mbase, MUSB_BUSCTL_OFFSET(epnum, MUSB_TXHUBADDR));
+	return musb_readb(musb->mregs,
+			  musb->io.busctl_offset(epnum, MUSB_RXHUBADDR));
 }
 
-static inline u8  musb_read_txhubport(void __iomem *mbase, u8 epnum)
+static inline u8 musb_read_rxhubport(struct musb *musb, u8 epnum)
 {
-	return musb_readb(mbase, MUSB_BUSCTL_OFFSET(epnum, MUSB_TXHUBPORT));
+	return musb_readb(musb->mregs,
+			  musb->io.busctl_offset(epnum, MUSB_RXHUBPORT));
+}
+
+static inline u8 musb_read_txfunaddr(struct musb *musb, u8 epnum)
+{
+	return musb_readb(musb->mregs,
+			  musb->io.busctl_offset(epnum, MUSB_TXFUNCADDR));
+}
+
+static inline u8 musb_read_txhubaddr(struct musb *musb, u8 epnum)
+{
+	return musb_readb(musb->mregs,
+			  musb->io.busctl_offset(epnum, MUSB_TXHUBADDR));
+}
+
+static inline u8 musb_read_txhubport(struct musb *musb, u8 epnum)
+{
+	return musb_readb(musb->mregs,
+			  musb->io.busctl_offset(epnum, MUSB_TXHUBPORT));
 }
 
 #else /* CONFIG_BLACKFIN */
@@ -556,22 +534,17 @@ static inline u16 musb_read_hwvers(void __iomem *mbase)
 	return MUSB_HWVERS_1900;
 }
 
-static inline void __iomem *musb_read_target_reg_base(u8 i, void __iomem *mbase)
-{
-	return NULL;
-}
-
-static inline void musb_write_rxfunaddr(void __iomem *ep_target_regs,
+static inline void musb_write_rxfunaddr(void __iomem *mbase, u8 epnum,
 		u8 qh_addr_req)
 {
 }
 
-static inline void musb_write_rxhubaddr(void __iomem *ep_target_regs,
+static inline void musb_write_rxhubaddr(void __iomem *mbase, u8 epnum,
 		u8 qh_h_addr_reg)
 {
 }
 
-static inline void musb_write_rxhubport(void __iomem *ep_target_regs,
+static inline void musb_write_rxhubport(void __iomem *mbase, u8 epnum,
 		u8 qh_h_port_reg)
 {
 }

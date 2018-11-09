@@ -37,7 +37,6 @@ static unsigned int help(struct sk_buff *skb,
 	struct nf_conn *ct = exp->master;
 	union nf_inet_addr newaddr;
 	u_int16_t port;
-	unsigned int ret;
 
 	/* Reply comes from server. */
 	newaddr = ct->tuplehash[IP_CT_DIR_REPLY].tuple.dst.u3;
@@ -83,14 +82,14 @@ static unsigned int help(struct sk_buff *skb,
 	pr_debug("nf_nat_irc: inserting '%s' == %pI4, port %u\n",
 		 buffer, &newaddr.ip, port);
 
-	ret = nf_nat_mangle_tcp_packet(skb, ct, ctinfo, protoff, matchoff,
-				       matchlen, buffer, strlen(buffer));
-	if (ret != NF_ACCEPT) {
+	if (!nf_nat_mangle_tcp_packet(skb, ct, ctinfo, protoff, matchoff,
+				      matchlen, buffer, strlen(buffer))) {
 		nf_ct_helper_log(skb, ct, "cannot mangle packet");
 		nf_ct_unexpect_related(exp);
+		return NF_DROP;
 	}
 
-	return ret;
+	return NF_ACCEPT;
 }
 
 static void __exit nf_nat_irc_fini(void)
@@ -107,7 +106,7 @@ static int __init nf_nat_irc_init(void)
 }
 
 /* Prior to 2.6.11, we had a ports param.  No longer, but don't break users. */
-static int warn_set(const char *val, struct kernel_param *kp)
+static int warn_set(const char *val, const struct kernel_param *kp)
 {
 	printk(KERN_INFO KBUILD_MODNAME
 	       ": kernel >= 2.6.10 only uses 'ports' for conntrack modules\n");

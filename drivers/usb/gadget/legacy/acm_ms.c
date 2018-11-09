@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * acm_ms.c -- Composite driver, with ACM and mass storage support
  *
@@ -7,11 +8,6 @@
  * Modified: Klaus Schwarzkopf <schwarzkopf@sensortherm.de>
  *
  * Heavily based on multi.c and cdc2.c
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
  */
 
 #include <linux/kernel.h>
@@ -40,7 +36,7 @@ static struct usb_device_descriptor device_desc = {
 	.bLength =		sizeof device_desc,
 	.bDescriptorType =	USB_DT_DEVICE,
 
-	.bcdUSB =		cpu_to_le16(0x0200),
+	/* .bcdUSB = DYNAMIC */
 
 	.bDeviceClass =		USB_CLASS_MISC /* 0xEF */,
 	.bDeviceSubClass =	2,
@@ -58,21 +54,7 @@ static struct usb_device_descriptor device_desc = {
 	/*.bNumConfigurations =	DYNAMIC*/
 };
 
-static struct usb_otg_descriptor otg_descriptor = {
-	.bLength =		sizeof otg_descriptor,
-	.bDescriptorType =	USB_DT_OTG,
-
-	/*
-	 * REVISIT SRP-only hardware is possible, although
-	 * it would not be called "OTG" ...
-	 */
-	.bmAttributes =		USB_OTG_SRP | USB_OTG_HNP,
-};
-
-static const struct usb_descriptor_header *otg_desc[] = {
-	(struct usb_descriptor_header *) &otg_descriptor,
-	NULL,
-};
+static const struct usb_descriptor_header *otg_desc[2];
 
 /* string IDs are assigned dynamically */
 static struct usb_string strings_dev[] = {
@@ -147,10 +129,6 @@ static int acm_ms_do_config(struct usb_configuration *c)
 	if (status < 0)
 		goto put_msg;
 
-	status = fsg_common_run_thread(opts->common);
-	if (status)
-		goto remove_acm;
-
 	status = usb_add_function(c, f_msg);
 	if (status)
 		goto remove_acm;
@@ -200,10 +178,6 @@ static int acm_ms_bind(struct usb_composite_dev *cdev)
 	if (status)
 		goto fail;
 
-	status = fsg_common_set_nluns(opts->common, config.nluns);
-	if (status)
-		goto fail_set_nluns;
-
 	status = fsg_common_set_cdev(opts->common, cdev, config.can_stall);
 	if (status)
 		goto fail_set_cdev;
@@ -225,10 +199,21 @@ static int acm_ms_bind(struct usb_composite_dev *cdev)
 	device_desc.iManufacturer = strings_dev[USB_GADGET_MANUFACTURER_IDX].id;
 	device_desc.iProduct = strings_dev[USB_GADGET_PRODUCT_IDX].id;
 
+	if (gadget_is_otg(gadget) && !otg_desc[0]) {
+		struct usb_descriptor_header *usb_desc;
+
+		usb_desc = usb_otg_descriptor_alloc(gadget);
+		if (!usb_desc)
+			goto fail_string_ids;
+		usb_otg_descriptor_init(gadget, usb_desc);
+		otg_desc[0] = usb_desc;
+		otg_desc[1] = NULL;
+	}
+
 	/* register our configuration */
 	status = usb_add_config(cdev, &acm_ms_config_driver, acm_ms_do_config);
 	if (status < 0)
-		goto fail_string_ids;
+		goto fail_otg_desc;
 
 	usb_composite_overwrite_options(cdev, &coverwrite);
 	dev_info(&gadget->dev, "%s, version: " DRIVER_VERSION "\n",
@@ -236,11 +221,12 @@ static int acm_ms_bind(struct usb_composite_dev *cdev)
 	return 0;
 
 	/* error recovery */
+fail_otg_desc:
+	kfree(otg_desc[0]);
+	otg_desc[0] = NULL;
 fail_string_ids:
 	fsg_common_remove_luns(opts->common);
 fail_set_cdev:
-	fsg_common_free_luns(opts->common);
-fail_set_nluns:
 	fsg_common_free_buffers(opts->common);
 fail:
 	usb_put_function_instance(fi_msg);
@@ -255,6 +241,9 @@ static int acm_ms_unbind(struct usb_composite_dev *cdev)
 	usb_put_function_instance(fi_msg);
 	usb_put_function(f_acm);
 	usb_put_function_instance(f_acm_inst);
+	kfree(otg_desc[0]);
+	otg_desc[0] = NULL;
+
 	return 0;
 }
 

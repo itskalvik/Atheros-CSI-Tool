@@ -23,11 +23,13 @@
 #include <asm/mach/arch.h>
 #include <asm/thread_info.h>
 #include <asm/memory.h>
+#include <asm/mpu.h>
 #include <asm/procinfo.h>
 #include <asm/suspend.h>
 #include <asm/vdso_datapage.h>
 #include <asm/hardware/cache-l2x0.h>
 #include <linux/kbuild.h>
+#include "signal.h"
 
 /*
  * Make sure that the compiler and target are compatible.
@@ -107,7 +109,13 @@ int main(void)
   DEFINE(S_PC,			offsetof(struct pt_regs, ARM_pc));
   DEFINE(S_PSR,			offsetof(struct pt_regs, ARM_cpsr));
   DEFINE(S_OLD_R0,		offsetof(struct pt_regs, ARM_ORIG_r0));
-  DEFINE(S_FRAME_SIZE,		sizeof(struct pt_regs));
+  DEFINE(PT_REGS_SIZE,		sizeof(struct pt_regs));
+  DEFINE(SVC_DACR,		offsetof(struct svc_pt_regs, dacr));
+  DEFINE(SVC_ADDR_LIMIT,	offsetof(struct svc_pt_regs, addr_limit));
+  DEFINE(SVC_REGS_SIZE,		sizeof(struct svc_pt_regs));
+  BLANK();
+  DEFINE(SIGFRAME_RC3_OFFSET,	offsetof(struct sigframe, retcode[3]));
+  DEFINE(RT_SIGFRAME_RC3_OFFSET, offsetof(struct rt_sigframe, sig.retcode[3]));
   BLANK();
 #ifdef CONFIG_CACHE_L2X0
   DEFINE(L2X0_R_PHY_BASE,	offsetof(struct l2x0_regs, phy_base));
@@ -170,45 +178,25 @@ int main(void)
   DEFINE(CACHE_WRITEBACK_GRANULE, __CACHE_WRITEBACK_GRANULE);
   BLANK();
 #ifdef CONFIG_KVM_ARM_HOST
-  DEFINE(VCPU_KVM,		offsetof(struct kvm_vcpu, kvm));
-  DEFINE(VCPU_MIDR,		offsetof(struct kvm_vcpu, arch.midr));
-  DEFINE(VCPU_CP15,		offsetof(struct kvm_vcpu, arch.cp15));
-  DEFINE(VCPU_VFP_GUEST,	offsetof(struct kvm_vcpu, arch.vfp_guest));
-  DEFINE(VCPU_VFP_HOST,		offsetof(struct kvm_vcpu, arch.host_cpu_context));
-  DEFINE(VCPU_REGS,		offsetof(struct kvm_vcpu, arch.regs));
-  DEFINE(VCPU_USR_REGS,		offsetof(struct kvm_vcpu, arch.regs.usr_regs));
-  DEFINE(VCPU_SVC_REGS,		offsetof(struct kvm_vcpu, arch.regs.svc_regs));
-  DEFINE(VCPU_ABT_REGS,		offsetof(struct kvm_vcpu, arch.regs.abt_regs));
-  DEFINE(VCPU_UND_REGS,		offsetof(struct kvm_vcpu, arch.regs.und_regs));
-  DEFINE(VCPU_IRQ_REGS,		offsetof(struct kvm_vcpu, arch.regs.irq_regs));
-  DEFINE(VCPU_FIQ_REGS,		offsetof(struct kvm_vcpu, arch.regs.fiq_regs));
-  DEFINE(VCPU_PC,		offsetof(struct kvm_vcpu, arch.regs.usr_regs.ARM_pc));
-  DEFINE(VCPU_CPSR,		offsetof(struct kvm_vcpu, arch.regs.usr_regs.ARM_cpsr));
-  DEFINE(VCPU_HCR,		offsetof(struct kvm_vcpu, arch.hcr));
-  DEFINE(VCPU_IRQ_LINES,	offsetof(struct kvm_vcpu, arch.irq_lines));
-  DEFINE(VCPU_HSR,		offsetof(struct kvm_vcpu, arch.fault.hsr));
-  DEFINE(VCPU_HxFAR,		offsetof(struct kvm_vcpu, arch.fault.hxfar));
-  DEFINE(VCPU_HPFAR,		offsetof(struct kvm_vcpu, arch.fault.hpfar));
-  DEFINE(VCPU_HYP_PC,		offsetof(struct kvm_vcpu, arch.fault.hyp_pc));
-  DEFINE(VCPU_VGIC_CPU,		offsetof(struct kvm_vcpu, arch.vgic_cpu));
-  DEFINE(VGIC_V2_CPU_HCR,	offsetof(struct vgic_cpu, vgic_v2.vgic_hcr));
-  DEFINE(VGIC_V2_CPU_VMCR,	offsetof(struct vgic_cpu, vgic_v2.vgic_vmcr));
-  DEFINE(VGIC_V2_CPU_MISR,	offsetof(struct vgic_cpu, vgic_v2.vgic_misr));
-  DEFINE(VGIC_V2_CPU_EISR,	offsetof(struct vgic_cpu, vgic_v2.vgic_eisr));
-  DEFINE(VGIC_V2_CPU_ELRSR,	offsetof(struct vgic_cpu, vgic_v2.vgic_elrsr));
-  DEFINE(VGIC_V2_CPU_APR,	offsetof(struct vgic_cpu, vgic_v2.vgic_apr));
-  DEFINE(VGIC_V2_CPU_LR,	offsetof(struct vgic_cpu, vgic_v2.vgic_lr));
-  DEFINE(VGIC_CPU_NR_LR,	offsetof(struct vgic_cpu, nr_lr));
-  DEFINE(VCPU_TIMER_CNTV_CTL,	offsetof(struct kvm_vcpu, arch.timer_cpu.cntv_ctl));
-  DEFINE(VCPU_TIMER_CNTV_CVAL,	offsetof(struct kvm_vcpu, arch.timer_cpu.cntv_cval));
-  DEFINE(KVM_TIMER_CNTVOFF,	offsetof(struct kvm, arch.timer.cntvoff));
-  DEFINE(KVM_TIMER_ENABLED,	offsetof(struct kvm, arch.timer.enabled));
-  DEFINE(KVM_VGIC_VCTRL,	offsetof(struct kvm, arch.vgic.vctrl_base));
-  DEFINE(KVM_VTTBR,		offsetof(struct kvm, arch.vttbr));
+  DEFINE(VCPU_GUEST_CTXT,	offsetof(struct kvm_vcpu, arch.ctxt));
+  DEFINE(VCPU_HOST_CTXT,	offsetof(struct kvm_vcpu, arch.host_cpu_context));
+  DEFINE(CPU_CTXT_VFP,		offsetof(struct kvm_cpu_context, vfp));
+  DEFINE(CPU_CTXT_GP_REGS,	offsetof(struct kvm_cpu_context, gp_regs));
+  DEFINE(GP_REGS_USR,		offsetof(struct kvm_regs, usr_regs));
 #endif
   BLANK();
 #ifdef CONFIG_VDSO
   DEFINE(VDSO_DATA_SIZE,	sizeof(union vdso_data_store));
+#endif
+  BLANK();
+#ifdef CONFIG_ARM_MPU
+  DEFINE(MPU_RNG_INFO_RNGS,	offsetof(struct mpu_rgn_info, rgns));
+  DEFINE(MPU_RNG_INFO_USED,	offsetof(struct mpu_rgn_info, used));
+
+  DEFINE(MPU_RNG_SIZE,		sizeof(struct mpu_rgn));
+  DEFINE(MPU_RGN_DRBAR,		offsetof(struct mpu_rgn, drbar));
+  DEFINE(MPU_RGN_DRSR,		offsetof(struct mpu_rgn, drsr));
+  DEFINE(MPU_RGN_DRACR,		offsetof(struct mpu_rgn, dracr));
 #endif
   return 0; 
 }

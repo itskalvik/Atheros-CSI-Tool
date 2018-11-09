@@ -8,25 +8,6 @@
  *
  * Copyright (c) 2004-2006 Silicon Graphics, Inc.  All Rights Reserved.
  *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of version 2 of the GNU General Public License
- * as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it would be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
- *
- * Further, this software is distributed without any warranty that it is
- * free of the rightful claim of any third person regarding infringement
- * or the like.  Any license provided herein, whether implied or
- * otherwise, applies only to this software file.  Patent licenses, if
- * any, provided herein do not apply to combinations of this program with
- * other software, or any other product whatsoever.
- *
- * You should have received a copy of the GNU General Public
- * License along with this program; if not, write the Free Software
- * Foundation, Inc., 59 Temple Place - Suite 330, Boston MA 02111-1307, USA.
- *
  * Contact information:  Silicon Graphics, Inc., 1500 Crittenden Lane,
  * Mountain View, CA  94043, or:
  *
@@ -42,7 +23,7 @@
 #include <linux/tty_flip.h>
 #include <linux/serial.h>
 #include <linux/console.h>
-#include <linux/module.h>
+#include <linux/init.h>
 #include <linux/sysrq.h>
 #include <linux/circ_buf.h>
 #include <linux/serial_reg.h>
@@ -380,7 +361,7 @@ static void snp_config_port(struct uart_port *port, int flags)
 
 /* Associate the uart functions above - given to serial core */
 
-static struct uart_ops sn_console_ops = {
+static const struct uart_ops sn_console_ops = {
 	.tx_empty = snp_tx_empty,
 	.set_mctrl = snp_set_mctrl,
 	.get_mctrl = snp_get_mctrl,
@@ -631,9 +612,9 @@ static irqreturn_t sn_sal_interrupt(int irq, void *dev_id)
  * Obviously not used in interrupt mode
  *
  */
-static void sn_sal_timer_poll(unsigned long data)
+static void sn_sal_timer_poll(struct timer_list *t)
 {
-	struct sn_cons_port *port = (struct sn_cons_port *)data;
+	struct sn_cons_port *port = from_timer(port, t, sc_timer);
 	unsigned long flags;
 
 	if (!port)
@@ -659,7 +640,7 @@ static void sn_sal_timer_poll(unsigned long data)
  * @port: Our sn_cons_port (which contains the uart port)
  *
  * So this is used by sn_sal_serial_console_init (early on, before we're
- * registered with serial core).  It's also used by sn_sal_module_init
+ * registered with serial core).  It's also used by sn_sal_init
  * right after we've registered with serial core.  The later only happens
  * if we didn't already come through here via sn_sal_serial_console_init.
  *
@@ -687,9 +668,7 @@ static void __init sn_sal_switch_to_asynch(struct sn_cons_port *port)
 	 * timer to poll for input and push data from the console
 	 * buffer.
 	 */
-	init_timer(&port->sc_timer);
-	port->sc_timer.function = sn_sal_timer_poll;
-	port->sc_timer.data = (unsigned long)port;
+	timer_setup(&port->sc_timer, sn_sal_timer_poll, 0);
 
 	if (IS_RUNNING_ON_SIMULATOR())
 		port->sc_interrupt_timeout = 6;
@@ -709,7 +688,7 @@ static void __init sn_sal_switch_to_asynch(struct sn_cons_port *port)
  * sn_sal_switch_to_interrupts - Switch to interrupt driven mode
  * @port: Our sn_cons_port (which contains the uart port)
  *
- * In sn_sal_module_init, after we're registered with serial core and
+ * In sn_sal_init, after we're registered with serial core and
  * the port is added, this function is called to switch us to interrupt
  * mode.  We were previously in asynch/polling mode (using init_timer).
  *
@@ -773,7 +752,7 @@ static struct uart_driver sal_console_uart = {
 };
 
 /**
- * sn_sal_module_init - When the kernel loads us, get us rolling w/ serial core
+ * sn_sal_init - When the kernel loads us, get us rolling w/ serial core
  *
  * Before this is called, we've been printing kernel messages in a special
  * early mode not making use of the serial core infrastructure.  When our
@@ -781,7 +760,7 @@ static struct uart_driver sal_console_uart = {
  * core and try to enable interrupt driven mode.
  *
  */
-static int __init sn_sal_module_init(void)
+static int __init sn_sal_init(void)
 {
 	int retval;
 
@@ -811,7 +790,7 @@ static int __init sn_sal_module_init(void)
 
 	if (uart_register_driver(&sal_console_uart) < 0) {
 		printk
-		    ("ERROR sn_sal_module_init failed uart_register_driver, line %d\n",
+		    ("ERROR sn_sal_init failed uart_register_driver, line %d\n",
 		     __LINE__);
 		return -ENODEV;
 	}
@@ -832,33 +811,19 @@ static int __init sn_sal_module_init(void)
 
 	/* when this driver is compiled in, the console initialization
 	 * will have already switched us into asynchronous operation
-	 * before we get here through the module initcalls */
+	 * before we get here through the initcalls */
 	if (!sal_console_port.sc_is_asynch) {
 		sn_sal_switch_to_asynch(&sal_console_port);
 	}
 
-	/* at this point (module_init) we can try to turn on interrupts */
+	/* at this point (device_init) we can try to turn on interrupts */
 	if (!IS_RUNNING_ON_SIMULATOR()) {
 		sn_sal_switch_to_interrupts(&sal_console_port);
 	}
 	sn_process_input = 1;
 	return 0;
 }
-
-/**
- * sn_sal_module_exit - When we're unloaded, remove the driver/port
- *
- */
-static void __exit sn_sal_module_exit(void)
-{
-	del_timer_sync(&sal_console_port.sc_timer);
-	uart_remove_one_port(&sal_console_uart, &sal_console_port.sc_port);
-	uart_unregister_driver(&sal_console_uart);
-	misc_deregister(&misc);
-}
-
-module_init(sn_sal_module_init);
-module_exit(sn_sal_module_exit);
+device_initcall(sn_sal_init);
 
 /**
  * puts_raw_fixed - sn_sal_console_write helper for adding \r's as required

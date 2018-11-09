@@ -1,8 +1,10 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _LINUX_CLOSURE_H
 #define _LINUX_CLOSURE_H
 
 #include <linux/llist.h>
 #include <linux/sched.h>
+#include <linux/sched/task_stack.h>
 #include <linux/workqueue.h>
 
 /*
@@ -31,14 +33,15 @@
  * passing it, as you might expect, the function to run when nothing is pending
  * and the workqueue to run that function out of.
  *
- * continue_at() also, critically, is a macro that returns the calling function.
+ * continue_at() also, critically, requires a 'return' immediately following the
+ * location where this macro is referenced, to return to the calling function.
  * There's good reason for this.
  *
  * To use safely closures asynchronously, they must always have a refcount while
  * they are running owned by the thread that is running them. Otherwise, suppose
  * you submit some bios and wish to have a function run when they all complete:
  *
- * foo_endio(struct bio *bio, int error)
+ * foo_endio(struct bio *bio)
  * {
  *	closure_put(cl);
  * }
@@ -249,6 +252,12 @@ static inline void set_closure_fn(struct closure *cl, closure_fn *fn,
 static inline void closure_queue(struct closure *cl)
 {
 	struct workqueue_struct *wq = cl->wq;
+	/**
+	 * Changes made to closure, work_struct, or a couple of other structs
+	 * may cause work.func not pointing to the right location.
+	 */
+	BUILD_BUG_ON(offsetof(struct closure, fn)
+		     != offsetof(struct work_struct, func));
 	if (wq) {
 		INIT_WORK(&cl->work, cl->work.func);
 		BUG_ON(!queue_work(wq, &cl->work));
@@ -310,8 +319,6 @@ static inline void closure_wake_up(struct closure_waitlist *list)
  * been dropped with closure_put()), it will resume execution at @fn running out
  * of @wq (or, if @wq is NULL, @fn will be called by closure_put() directly).
  *
- * NOTE: This macro expands to a return in the calling function!
- *
  * This is because after calling continue_at() you no longer have a ref on @cl,
  * and whatever @cl owns may be freed out from under you - a running closure fn
  * has a ref on its own closure which continue_at() drops.
@@ -320,7 +327,6 @@ static inline void closure_wake_up(struct closure_waitlist *list)
 do {									\
 	set_closure_fn(_cl, _fn, _wq);					\
 	closure_sub(_cl, CLOSURE_RUNNING + 1);				\
-	return;								\
 } while (0)
 
 /**
@@ -339,8 +345,6 @@ do {									\
  * Causes @fn to be executed out of @cl, in @wq context (or called directly if
  * @wq is NULL).
  *
- * NOTE: like continue_at(), this macro expands to a return in the caller!
- *
  * The ref the caller of continue_at_nobarrier() had on @cl is now owned by @fn,
  * thus it's not safe to touch anything protected by @cl after a
  * continue_at_nobarrier().
@@ -349,7 +353,6 @@ do {									\
 do {									\
 	set_closure_fn(_cl, _fn, _wq);					\
 	closure_queue(_cl);						\
-	return;								\
 } while (0)
 
 /**
@@ -365,7 +368,6 @@ do {									\
 do {									\
 	set_closure_fn(_cl, _destructor, NULL);				\
 	closure_sub(_cl, CLOSURE_RUNNING - CLOSURE_DESTRUCTOR + 1);	\
-	return;								\
 } while (0)
 
 /**

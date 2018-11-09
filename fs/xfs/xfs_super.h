@@ -30,7 +30,7 @@ extern void xfs_qm_exit(void);
 
 #ifdef CONFIG_XFS_POSIX_ACL
 # define XFS_ACL_STRING		"ACLs, "
-# define set_posix_acl_flag(sb)	((sb)->s_flags |= MS_POSIXACL)
+# define set_posix_acl_flag(sb)	((sb)->s_flags |= SB_POSIXACL)
 #else
 # define XFS_ACL_STRING
 # define set_posix_acl_flag(sb)	do { } while (0)
@@ -61,18 +61,19 @@ struct xfs_mount;
 struct xfs_buftarg;
 struct block_device;
 
-extern __uint64_t xfs_max_file_offset(unsigned int);
-
+extern void xfs_quiesce_attr(struct xfs_mount *mp);
 extern void xfs_flush_inodes(struct xfs_mount *mp);
 extern void xfs_blkdev_issue_flush(struct xfs_buftarg *);
-extern xfs_agnumber_t xfs_set_inode32(struct xfs_mount *, xfs_agnumber_t agcount);
-extern xfs_agnumber_t xfs_set_inode64(struct xfs_mount *, xfs_agnumber_t agcount);
+extern xfs_agnumber_t xfs_set_inode_alloc(struct xfs_mount *,
+					   xfs_agnumber_t agcount);
 
 extern const struct export_operations xfs_export_operations;
 extern const struct xattr_handler *xfs_xattr_handlers[];
 extern const struct quotactl_ops xfs_quotactl_operations;
 
 extern void xfs_reinit_percpu_counters(struct xfs_mount *mp);
+
+extern struct workqueue_struct *xfs_discard_wq;
 
 #define XFS_M(sb)		((struct xfs_mount *)((sb)->s_fs_info))
 

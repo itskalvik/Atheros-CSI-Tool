@@ -58,7 +58,7 @@ struct armada_thermal_data {
 	/* Test for a valid sensor value (optional) */
 	bool (*is_valid)(struct armada_thermal_priv *);
 
-	/* Formula coeficients: temp = (b + m * reg) / div */
+	/* Formula coeficients: temp = (b - m * reg) / div */
 	unsigned long coef_b;
 	unsigned long coef_m;
 	unsigned long coef_div;
@@ -155,7 +155,7 @@ static bool armada_is_valid(struct armada_thermal_priv *priv)
 }
 
 static int armada_get_temp(struct thermal_zone_device *thermal,
-			  unsigned long *temp)
+			  int *temp)
 {
 	struct armada_thermal_priv *priv = thermal->devdata;
 	unsigned long reg;
@@ -224,9 +224,9 @@ static const struct armada_thermal_data armada380_data = {
 	.is_valid_shift = 10,
 	.temp_shift = 0,
 	.temp_mask = 0x3ff,
-	.coef_b = 2931108200UL,
-	.coef_m = 5000000UL,
-	.coef_div = 10502,
+	.coef_b = 1172499100UL,
+	.coef_m = 2000096UL,
+	.coef_div = 4201,
 	.inverted = true,
 };
 

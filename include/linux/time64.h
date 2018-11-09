@@ -1,21 +1,28 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _LINUX_TIME64_H
 #define _LINUX_TIME64_H
 
 #include <uapi/linux/time.h>
+#include <linux/math64.h>
 
 typedef __s64 time64_t;
+typedef __u64 timeu64_t;
 
-/*
- * This wants to go into uapi/linux/time.h once we agreed about the
- * userspace interfaces.
- */
 #if __BITS_PER_LONG == 64
+/* this trick allows us to optimize out timespec64_to_timespec */
 # define timespec64 timespec
+#define itimerspec64 itimerspec
 #else
 struct timespec64 {
 	time64_t	tv_sec;			/* seconds */
 	long		tv_nsec;		/* nanoseconds */
 };
+
+struct itimerspec64 {
+	struct timespec64 it_interval;
+	struct timespec64 it_value;
+};
+
 #endif
 
 /* Parameters used to convert the timespec values: */
@@ -28,52 +35,9 @@ struct timespec64 {
 #define FSEC_PER_SEC	1000000000000000LL
 
 /* Located here for timespec[64]_valid_strict */
+#define TIME64_MAX			((s64)~((u64)1 << 63))
 #define KTIME_MAX			((s64)~((u64)1 << 63))
 #define KTIME_SEC_MAX			(KTIME_MAX / NSEC_PER_SEC)
-
-#if __BITS_PER_LONG == 64
-
-static inline struct timespec timespec64_to_timespec(const struct timespec64 ts64)
-{
-	return ts64;
-}
-
-static inline struct timespec64 timespec_to_timespec64(const struct timespec ts)
-{
-	return ts;
-}
-
-# define timespec64_equal		timespec_equal
-# define timespec64_compare		timespec_compare
-# define set_normalized_timespec64	set_normalized_timespec
-# define timespec64_add_safe		timespec_add_safe
-# define timespec64_add			timespec_add
-# define timespec64_sub			timespec_sub
-# define timespec64_valid		timespec_valid
-# define timespec64_valid_strict	timespec_valid_strict
-# define timespec64_to_ns		timespec_to_ns
-# define ns_to_timespec64		ns_to_timespec
-# define timespec64_add_ns		timespec_add_ns
-
-#else
-
-static inline struct timespec timespec64_to_timespec(const struct timespec64 ts64)
-{
-	struct timespec ret;
-
-	ret.tv_sec = (time_t)ts64.tv_sec;
-	ret.tv_nsec = ts64.tv_nsec;
-	return ret;
-}
-
-static inline struct timespec64 timespec_to_timespec64(const struct timespec ts)
-{
-	struct timespec64 ret;
-
-	ret.tv_sec = ts.tv_sec;
-	ret.tv_nsec = ts.tv_nsec;
-	return ret;
-}
 
 static inline int timespec64_equal(const struct timespec64 *a,
 				   const struct timespec64 *b)
@@ -96,15 +60,6 @@ static inline int timespec64_compare(const struct timespec64 *lhs, const struct 
 }
 
 extern void set_normalized_timespec64(struct timespec64 *ts, time64_t sec, s64 nsec);
-
-/*
- * timespec64_add_safe assumes both values are positive and checks for
- * overflow. It will return TIME_T_MAX if the returned value would be
- * smaller then either of the arguments.
- */
-extern struct timespec64 timespec64_add_safe(const struct timespec64 lhs,
-					 const struct timespec64 rhs);
-
 
 static inline struct timespec64 timespec64_add(struct timespec64 lhs,
 						struct timespec64 rhs)
@@ -185,6 +140,11 @@ static __always_inline void timespec64_add_ns(struct timespec64 *a, u64 ns)
 	a->tv_nsec = ns;
 }
 
-#endif
+/*
+ * timespec64_add_safe assumes both values are positive and checks for
+ * overflow. It will return TIME64_MAX in case of overflow.
+ */
+extern struct timespec64 timespec64_add_safe(const struct timespec64 lhs,
+					 const struct timespec64 rhs);
 
 #endif /* _LINUX_TIME64_H */

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
 * OHCI HCD (Host Controller Driver) for USB.
 *
@@ -5,10 +6,6 @@
 * Deepak Sikri<deepak.sikri@st.com>
 *
 * Based on various ohci-*.c drivers
-*
-* This file is licensed under the terms of the GNU General Public
-* License version 2. This program is licensed "as is" without any
-* warranty of any kind, whether express or implied.
 */
 
 #include <linux/clk.h>
@@ -161,6 +158,7 @@ static const struct of_device_id spear_ohci_id_table[] = {
 	{ .compatible = "st,spear600-ohci", },
 	{ },
 };
+MODULE_DEVICE_TABLE(of, spear_ohci_id_table);
 
 /* Driver definition to register with the platform bus */
 static struct platform_driver spear_ohci_hcd_driver = {

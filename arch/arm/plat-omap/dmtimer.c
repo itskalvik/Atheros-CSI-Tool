@@ -36,6 +36,7 @@
  */
 
 #include <linux/clk.h>
+#include <linux/clk-provider.h>
 #include <linux/module.h>
 #include <linux/io.h>
 #include <linux/device.h>
@@ -137,6 +138,31 @@ static int omap_dm_timer_reset(struct omap_dm_timer *timer)
 	return 0;
 }
 
+static int omap_dm_timer_of_set_source(struct omap_dm_timer *timer)
+{
+	int ret;
+	struct clk *parent;
+
+	/*
+	 * FIXME: OMAP1 devices do not use the clock framework for dmtimers so
+	 * do not call clk_get() for these devices.
+	 */
+	if (!timer->fclk)
+		return -ENODEV;
+
+	parent = clk_get(&timer->pdev->dev, NULL);
+	if (IS_ERR(parent))
+		return -ENODEV;
+
+	ret = clk_set_parent(timer->fclk, parent);
+	if (ret < 0)
+		pr_err("%s: failed to set parent\n", __func__);
+
+	clk_put(parent);
+
+	return ret;
+}
+
 static int omap_dm_timer_prepare(struct omap_dm_timer *timer)
 {
 	int rc;
@@ -166,7 +192,11 @@ static int omap_dm_timer_prepare(struct omap_dm_timer *timer)
 	__omap_dm_timer_enable_posted(timer);
 	omap_dm_timer_disable(timer);
 
-	return omap_dm_timer_set_source(timer, OMAP_TIMER_SRC_32_KHZ);
+	rc = omap_dm_timer_of_set_source(timer);
+	if (rc == -ENODEV)
+		return omap_dm_timer_set_source(timer, OMAP_TIMER_SRC_32_KHZ);
+
+	return rc;
 }
 
 static inline u32 omap_dm_timer_reserved_systimer(int id)
@@ -224,8 +254,8 @@ static struct omap_dm_timer *_omap_dm_timer_request(int req_type, void *data)
 			if (cap == (t->capability & cap)) {
 				/*
 				 * If timer is not NULL, we have already found
-				 * one timer but it was not an exact match
-				 * because it had more capabilites that what
+				 * one timer. But it was not an exact match
+				 * because it had more capabilities than what
 				 * was required. Therefore, unreserve the last
 				 * timer found and see if this one is a better
 				 * match.
@@ -503,6 +533,12 @@ int omap_dm_timer_set_source(struct omap_dm_timer *timer, int source)
 
 	if (IS_ERR(timer->fclk))
 		return -EINVAL;
+
+#if defined(CONFIG_COMMON_CLK)
+	/* Check if the clock has configurable parents */
+	if (clk_hw_get_num_parents(__clk_get_hw(timer->fclk)) < 2)
+		return 0;
+#endif
 
 	switch (source) {
 	case OMAP_TIMER_SRC_SYS_CLK:
@@ -821,11 +857,9 @@ static int omap_dm_timer_probe(struct platform_device *pdev)
 		return -ENODEV;
 	}
 
-	timer = devm_kzalloc(dev, sizeof(struct omap_dm_timer), GFP_KERNEL);
-	if (!timer) {
-		dev_err(dev, "%s: memory alloc failed!\n", __func__);
+	timer = devm_kzalloc(dev, sizeof(*timer), GFP_KERNEL);
+	if (!timer)
 		return  -ENOMEM;
-	}
 
 	timer->fclk = ERR_PTR(-ENODEV);
 	timer->io_base = devm_ioremap_resource(dev, mem);
@@ -941,6 +975,10 @@ static const struct of_device_id omap_timer_match[] = {
 	},
 	{
 		.compatible = "ti,am335x-timer-1ms",
+		.data = &omap3plus_pdata,
+	},
+	{
+		.compatible = "ti,dm816-timer",
 		.data = &omap3plus_pdata,
 	},
 	{},

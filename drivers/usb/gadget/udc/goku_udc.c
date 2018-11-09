@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Toshiba TC86C001 ("Goku-S") USB Device Controller driver
  *
@@ -5,10 +6,6 @@
  *      by Stuart Lynne, Tom Rushworth, and Bruce Balden
  * Copyright (C) 2002 Toshiba Corporation
  * Copyright (C) 2003 MontaVista Software (source@mvista.com)
- *
- * This file is licensed under the terms of the GNU General Public
- * License version 2.  This program is licensed "as is" without any
- * warranty of any kind, whether express or implied.
  */
 
 /*
@@ -127,11 +124,15 @@ goku_ep_enable(struct usb_ep *_ep, const struct usb_endpoint_descriptor *desc)
 	mode = 0;
 	max = get_unaligned_le16(&desc->wMaxPacketSize);
 	switch (max) {
-	case 64:	mode++;
-	case 32:	mode++;
-	case 16:	mode++;
-	case 8:		mode <<= 3;
-			break;
+	case 64:
+		mode++; /* fall through */
+	case 32:
+		mode++; /* fall through */
+	case 16:
+		mode++; /* fall through */
+	case 8:
+		mode <<= 3;
+		break;
 	default:
 		return -EINVAL;
 	}
@@ -968,7 +969,7 @@ static void goku_fifo_flush(struct usb_ep *_ep)
 		command(regs, COMMAND_FIFO_CLEAR, ep->num);
 }
 
-static struct usb_ep_ops goku_ep_ops = {
+static const struct usb_ep_ops goku_ep_ops = {
 	.enable		= goku_ep_enable,
 	.disable	= goku_ep_disable,
 
@@ -990,6 +991,35 @@ static int goku_get_frame(struct usb_gadget *_gadget)
 	return -EOPNOTSUPP;
 }
 
+static struct usb_ep *goku_match_ep(struct usb_gadget *g,
+		struct usb_endpoint_descriptor *desc,
+		struct usb_ss_ep_comp_descriptor *ep_comp)
+{
+	struct goku_udc	*dev = to_goku_udc(g);
+	struct usb_ep *ep;
+
+	switch (usb_endpoint_type(desc)) {
+	case USB_ENDPOINT_XFER_INT:
+		/* single buffering is enough */
+		ep = &dev->ep[3].ep;
+		if (usb_gadget_ep_match_desc(g, ep, desc, ep_comp))
+			return ep;
+		break;
+	case USB_ENDPOINT_XFER_BULK:
+		if (usb_endpoint_dir_in(desc)) {
+			/* DMA may be available */
+			ep = &dev->ep[2].ep;
+			if (usb_gadget_ep_match_desc(g, ep, desc, ep_comp))
+				return ep;
+		}
+		break;
+	default:
+		/* nothing */ ;
+	}
+
+	return NULL;
+}
+
 static int goku_udc_start(struct usb_gadget *g,
 		struct usb_gadget_driver *driver);
 static int goku_udc_stop(struct usb_gadget *g);
@@ -998,6 +1028,7 @@ static const struct usb_gadget_ops goku_ops = {
 	.get_frame	= goku_get_frame,
 	.udc_start	= goku_udc_start,
 	.udc_stop	= goku_udc_stop,
+	.match_ep	= goku_match_ep,
 	// no remote wakeup
 	// not selfpowered
 };
@@ -1257,6 +1288,14 @@ static void udc_reinit (struct goku_udc *dev)
 		INIT_LIST_HEAD (&ep->queue);
 
 		ep_reset(NULL, ep);
+
+		if (i == 0)
+			ep->ep.caps.type_control = true;
+		else
+			ep->ep.caps.type_bulk = true;
+
+		ep->ep.caps.dir_in = true;
+		ep->ep.caps.dir_out = true;
 	}
 
 	dev->ep[0].reg_mode = NULL;
@@ -1729,8 +1768,7 @@ static int goku_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 
 	/* alloc, and start init */
 	dev = kzalloc (sizeof *dev, GFP_KERNEL);
-	if (dev == NULL){
-		pr_debug("enomem %s\n", pci_name(pdev));
+	if (!dev) {
 		retval = -ENOMEM;
 		goto err;
 	}
@@ -1801,6 +1839,8 @@ static int goku_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 err:
 	if (dev)
 		goku_remove (pdev);
+	/* gadget_release is not registered yet, kfree explicitly */
+	kfree(dev);
 	return retval;
 }
 
@@ -1808,7 +1848,7 @@ err:
 /*-------------------------------------------------------------------------*/
 
 static const struct pci_device_id pci_ids[] = { {
-	.class =	((PCI_CLASS_SERIAL_USB << 8) | 0xfe),
+	.class =	PCI_CLASS_SERIAL_USB_DEVICE,
 	.class_mask =	~0,
 	.vendor =	0x102f,		/* Toshiba */
 	.device =	0x0107,		/* this UDC */

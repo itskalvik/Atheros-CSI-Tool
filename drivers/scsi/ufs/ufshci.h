@@ -48,6 +48,7 @@ enum {
 	REG_UFS_VERSION				= 0x08,
 	REG_CONTROLLER_DEV_ID			= 0x10,
 	REG_CONTROLLER_PROD_ID			= 0x14,
+	REG_AUTO_HIBERNATE_IDLE_TIMER		= 0x18,
 	REG_INTERRUPT_STATUS			= 0x20,
 	REG_INTERRUPT_ENABLE			= 0x24,
 	REG_CONTROLLER_STATUS			= 0x30,
@@ -72,6 +73,13 @@ enum {
 	REG_UIC_COMMAND_ARG_1			= 0x94,
 	REG_UIC_COMMAND_ARG_2			= 0x98,
 	REG_UIC_COMMAND_ARG_3			= 0x9C,
+
+	UFSHCI_REG_SPACE_SIZE			= 0xA0,
+
+	REG_UFS_CCAP				= 0x100,
+	REG_UFS_CRYPTOCAP			= 0x104,
+
+	UFSHCI_CRYPTO_REG_SPACE_SIZE		= 0x400,
 };
 
 /* Controller capability masks */
@@ -83,14 +91,18 @@ enum {
 	MASK_UIC_DME_TEST_MODE_SUPPORT		= 0x04000000,
 };
 
+#define UFS_MASK(mask, offset)		((mask) << (offset))
+
 /* UFS Version 08h */
 #define MINOR_VERSION_NUM_MASK		UFS_MASK(0xFFFF, 0)
 #define MAJOR_VERSION_NUM_MASK		UFS_MASK(0xFFFF, 16)
 
 /* Controller UFSHCI version */
 enum {
-	UFSHCI_VERSION_10 = 0x00010000,
-	UFSHCI_VERSION_11 = 0x00010100,
+	UFSHCI_VERSION_10 = 0x00010000, /* 1.0 */
+	UFSHCI_VERSION_11 = 0x00010100, /* 1.1 */
+	UFSHCI_VERSION_20 = 0x00000200, /* 2.0 */
+	UFSHCI_VERSION_21 = 0x00000210, /* 2.1 */
 };
 
 /*
@@ -107,22 +119,23 @@ enum {
 #define MANUFACTURE_ID_MASK	UFS_MASK(0xFFFF, 0)
 #define PRODUCT_ID_MASK		UFS_MASK(0xFFFF, 16)
 
-#define UFS_BIT(x)	(1L << (x))
-
-#define UTP_TRANSFER_REQ_COMPL			UFS_BIT(0)
-#define UIC_DME_END_PT_RESET			UFS_BIT(1)
-#define UIC_ERROR				UFS_BIT(2)
-#define UIC_TEST_MODE				UFS_BIT(3)
-#define UIC_POWER_MODE				UFS_BIT(4)
-#define UIC_HIBERNATE_EXIT			UFS_BIT(5)
-#define UIC_HIBERNATE_ENTER			UFS_BIT(6)
-#define UIC_LINK_LOST				UFS_BIT(7)
-#define UIC_LINK_STARTUP			UFS_BIT(8)
-#define UTP_TASK_REQ_COMPL			UFS_BIT(9)
-#define UIC_COMMAND_COMPL			UFS_BIT(10)
-#define DEVICE_FATAL_ERROR			UFS_BIT(11)
-#define CONTROLLER_FATAL_ERROR			UFS_BIT(16)
-#define SYSTEM_BUS_FATAL_ERROR			UFS_BIT(17)
+/*
+ * IS - Interrupt Status - 20h
+ */
+#define UTP_TRANSFER_REQ_COMPL			0x1
+#define UIC_DME_END_PT_RESET			0x2
+#define UIC_ERROR				0x4
+#define UIC_TEST_MODE				0x8
+#define UIC_POWER_MODE				0x10
+#define UIC_HIBERNATE_EXIT			0x20
+#define UIC_HIBERNATE_ENTER			0x40
+#define UIC_LINK_LOST				0x80
+#define UIC_LINK_STARTUP			0x100
+#define UTP_TASK_REQ_COMPL			0x200
+#define UIC_COMMAND_COMPL			0x400
+#define DEVICE_FATAL_ERROR			0x800
+#define CONTROLLER_FATAL_ERROR			0x10000
+#define SYSTEM_BUS_FATAL_ERROR			0x20000
 
 #define UFSHCD_UIC_PWR_MASK	(UIC_HIBERNATE_ENTER |\
 				UIC_HIBERNATE_EXIT |\
@@ -140,13 +153,15 @@ enum {
 				SYSTEM_BUS_FATAL_ERROR)
 
 /* HCS - Host Controller Status 30h */
-#define DEVICE_PRESENT				UFS_BIT(0)
-#define UTP_TRANSFER_REQ_LIST_READY		UFS_BIT(1)
-#define UTP_TASK_REQ_LIST_READY			UFS_BIT(2)
-#define UIC_COMMAND_READY			UFS_BIT(3)
-#define HOST_ERROR_INDICATOR			UFS_BIT(4)
-#define DEVICE_ERROR_INDICATOR			UFS_BIT(5)
+#define DEVICE_PRESENT				0x1
+#define UTP_TRANSFER_REQ_LIST_READY		0x2
+#define UTP_TASK_REQ_LIST_READY			0x4
+#define UIC_COMMAND_READY			0x8
 #define UIC_POWER_MODE_CHANGE_REQ_STATUS_MASK	UFS_MASK(0x7, 8)
+
+#define UFSHCD_STATUS_READY	(UTP_TRANSFER_REQ_LIST_READY |\
+				UTP_TASK_REQ_LIST_READY |\
+				UIC_COMMAND_READY)
 
 enum {
 	PWR_OK		= 0x0,
@@ -158,42 +173,47 @@ enum {
 };
 
 /* HCE - Host Controller Enable 34h */
-#define CONTROLLER_ENABLE	UFS_BIT(0)
+#define CONTROLLER_ENABLE	0x1
 #define CONTROLLER_DISABLE	0x0
+#define CRYPTO_GENERAL_ENABLE	0x2
 
 /* UECPA - Host UIC Error Code PHY Adapter Layer 38h */
-#define UIC_PHY_ADAPTER_LAYER_ERROR			UFS_BIT(31)
+#define UIC_PHY_ADAPTER_LAYER_ERROR			0x80000000
 #define UIC_PHY_ADAPTER_LAYER_ERROR_CODE_MASK		0x1F
+#define UIC_PHY_ADAPTER_LAYER_LANE_ERR_MASK		0xF
 
 /* UECDL - Host UIC Error Code Data Link Layer 3Ch */
-#define UIC_DATA_LINK_LAYER_ERROR		UFS_BIT(31)
+#define UIC_DATA_LINK_LAYER_ERROR		0x80000000
 #define UIC_DATA_LINK_LAYER_ERROR_CODE_MASK	0x7FFF
 #define UIC_DATA_LINK_LAYER_ERROR_PA_INIT	0x2000
+#define UIC_DATA_LINK_LAYER_ERROR_NAC_RECEIVED	0x0001
+#define UIC_DATA_LINK_LAYER_ERROR_TCx_REPLAY_TIMEOUT 0x0002
 
 /* UECN - Host UIC Error Code Network Layer 40h */
-#define UIC_NETWORK_LAYER_ERROR			UFS_BIT(31)
+#define UIC_NETWORK_LAYER_ERROR			0x80000000
 #define UIC_NETWORK_LAYER_ERROR_CODE_MASK	0x7
 
 /* UECT - Host UIC Error Code Transport Layer 44h */
-#define UIC_TRANSPORT_LAYER_ERROR		UFS_BIT(31)
+#define UIC_TRANSPORT_LAYER_ERROR		0x80000000
 #define UIC_TRANSPORT_LAYER_ERROR_CODE_MASK	0x7F
 
 /* UECDME - Host UIC Error Code DME 48h */
-#define UIC_DME_ERROR			UFS_BIT(31)
+#define UIC_DME_ERROR			0x80000000
 #define UIC_DME_ERROR_CODE_MASK		0x1
 
+/* UTRIACR - Interrupt Aggregation control register - 0x4Ch */
 #define INT_AGGR_TIMEOUT_VAL_MASK		0xFF
 #define INT_AGGR_COUNTER_THRESHOLD_MASK		UFS_MASK(0x1F, 8)
-#define INT_AGGR_COUNTER_AND_TIMER_RESET	UFS_BIT(16)
-#define INT_AGGR_STATUS_BIT			UFS_BIT(20)
-#define INT_AGGR_PARAM_WRITE			UFS_BIT(24)
-#define INT_AGGR_ENABLE				UFS_BIT(31)
+#define INT_AGGR_COUNTER_AND_TIMER_RESET	0x10000
+#define INT_AGGR_STATUS_BIT			0x100000
+#define INT_AGGR_PARAM_WRITE			0x1000000
+#define INT_AGGR_ENABLE				0x80000000
 
 /* UTRLRSR - UTP Transfer Request Run-Stop Register 60h */
-#define UTP_TRANSFER_REQ_LIST_RUN_STOP_BIT	UFS_BIT(0)
+#define UTP_TRANSFER_REQ_LIST_RUN_STOP_BIT	0x1
 
 /* UTMRLRSR - UTP Task Management Request Run-Stop Register 80h */
-#define UTP_TASK_REQ_LIST_RUN_STOP_BIT		UFS_BIT(0)
+#define UTP_TASK_REQ_LIST_RUN_STOP_BIT		0x1
 
 /* UICCMD - UIC Command */
 #define COMMAND_OPCODE_MASK		0xFF
@@ -206,11 +226,21 @@ enum {
 #define CONFIG_RESULT_CODE_MASK		0xFF
 #define GENERIC_ERROR_CODE_MASK		0xFF
 
+/* GenSelectorIndex calculation macros for M-PHY attributes */
+#define UIC_ARG_MPHY_TX_GEN_SEL_INDEX(lane) (lane)
+#define UIC_ARG_MPHY_RX_GEN_SEL_INDEX(lane) (PA_MAXDATALANES + (lane))
+
 #define UIC_ARG_MIB_SEL(attr, sel)	((((attr) & 0xFFFF) << 16) |\
 					 ((sel) & 0xFFFF))
 #define UIC_ARG_MIB(attr)		UIC_ARG_MIB_SEL(attr, 0)
 #define UIC_ARG_ATTR_TYPE(t)		(((t) & 0xFF) << 16)
 #define UIC_GET_ATTR_ID(v)		(((v) >> 16) & 0xFFFF)
+
+/* Link Status*/
+enum link_status {
+	UFSHCD_LINK_IS_DOWN	= 1,
+	UFSHCD_LINK_IS_UP	= 2,
+};
 
 /* UIC Commands */
 enum uic_cmd_dme {
@@ -258,6 +288,9 @@ enum {
 
 	/* Interrupt disable mask for UFSHCI v1.1 */
 	INTERRUPT_MASK_ALL_VER_11	= 0x31FFF,
+
+	/* Interrupt disable mask for UFSHCI v2.1 */
+	INTERRUPT_MASK_ALL_VER_21	= 0x71FFF,
 };
 
 /*
@@ -269,6 +302,11 @@ enum {
 	UTP_CMD_TYPE_SCSI		= 0x0,
 	UTP_CMD_TYPE_UFS		= 0x1,
 	UTP_CMD_TYPE_DEV_MANAGE		= 0x2,
+};
+
+/* To accommodate UFS2.0 required Command type */
+enum {
+	UTP_CMD_TYPE_UFS_STORAGE	= 0x1,
 };
 
 enum {

@@ -1,24 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2005-2006 by Texas Instruments
  *
  * This file is part of the Inventra Controller Driver for Linux.
- *
- * The Inventra Controller Driver for Linux is free software; you
- * can redistribute it and/or modify it under the terms of the GNU
- * General Public License version 2 as published by the Free Software
- * Foundation.
- *
- * The Inventra Controller Driver for Linux is distributed in
- * the hope that it will be useful, but WITHOUT ANY WARRANTY;
- * without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public
- * License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with The Inventra Controller Driver for Linux ; if not,
- * write to the Free Software Foundation, Inc., 59 Temple Place,
- * Suite 330, Boston, MA  02111-1307  USA
- *
  */
 
 #include <linux/module.h>
@@ -133,7 +117,6 @@ static void davinci_musb_disable(struct musb *musb)
 			  DAVINCI_USB_USBINT_MASK
 			| DAVINCI_USB_TXINT_MASK
 			| DAVINCI_USB_RXINT_MASK);
-	musb_writeb(musb->mregs, MUSB_DEVCTL, 0);
 	musb_writel(musb->ctrl_base, DAVINCI_USB_EOI_REG, 0);
 
 	if (is_dma_capable() && !dma_off)
@@ -200,11 +183,9 @@ static void davinci_musb_set_vbus(struct musb *musb, int is_on)
 
 #define	POLL_SECONDS	2
 
-static struct timer_list otg_workaround;
-
-static void otg_timer(unsigned long _musb)
+static void otg_timer(struct timer_list *t)
 {
-	struct musb		*musb = (void *)_musb;
+	struct musb		*musb = from_timer(musb, t, dev_timer);
 	void __iomem		*mregs = musb->mregs;
 	u8			devctl;
 	unsigned long		flags;
@@ -225,7 +206,7 @@ static void otg_timer(unsigned long _musb)
 		 * VBUSERR got reported during enumeration" cases.
 		 */
 		if (devctl & MUSB_DEVCTL_VBUS) {
-			mod_timer(&otg_workaround, jiffies + POLL_SECONDS * HZ);
+			mod_timer(&musb->dev_timer, jiffies + POLL_SECONDS * HZ);
 			break;
 		}
 		musb->xceiv->otg->state = OTG_STATE_A_WAIT_VRISE;
@@ -249,7 +230,7 @@ static void otg_timer(unsigned long _musb)
 				devctl | MUSB_DEVCTL_SESSION);
 		devctl = musb_readb(mregs, MUSB_DEVCTL);
 		if (devctl & MUSB_DEVCTL_BDEVICE)
-			mod_timer(&otg_workaround, jiffies + POLL_SECONDS * HZ);
+			mod_timer(&musb->dev_timer, jiffies + POLL_SECONDS * HZ);
 		else
 			musb->xceiv->otg->state = OTG_STATE_A_IDLE;
 		break;
@@ -284,7 +265,7 @@ static irqreturn_t davinci_musb_interrupt(int irq, void *__hci)
 	 * mask, state, "vector", and EOI registers.
 	 */
 	cppi = container_of(musb->dma_controller, struct cppi, controller);
-	if (is_cppi_enabled() && musb->dma_controller && !cppi->irq)
+	if (is_cppi_enabled(musb) && musb->dma_controller && !cppi->irq)
 		retval = cppi_interrupt(irq, __hci);
 
 	/* ack and handle non-CPPI interrupts */
@@ -326,14 +307,14 @@ static irqreturn_t davinci_musb_interrupt(int irq, void *__hci)
 			 */
 			musb->int_usb &= ~MUSB_INTR_VBUSERROR;
 			musb->xceiv->otg->state = OTG_STATE_A_WAIT_VFALL;
-			mod_timer(&otg_workaround, jiffies + POLL_SECONDS * HZ);
+			mod_timer(&musb->dev_timer, jiffies + POLL_SECONDS * HZ);
 			WARNING("VBUS error workaround (delay coming)\n");
 		} else if (drvvbus) {
 			MUSB_HST_MODE(musb);
 			otg->default_a = 1;
 			musb->xceiv->otg->state = OTG_STATE_A_WAIT_VRISE;
 			portstate(musb->port1_status |= USB_PORT_STAT_POWER);
-			del_timer(&otg_workaround);
+			del_timer(&musb->dev_timer);
 		} else {
 			musb->is_active = 0;
 			MUSB_DEV_MODE(musb);
@@ -362,7 +343,7 @@ static irqreturn_t davinci_musb_interrupt(int irq, void *__hci)
 
 	/* poll for ID change */
 	if (musb->xceiv->otg->state == OTG_STATE_B_IDLE)
-		mod_timer(&otg_workaround, jiffies + POLL_SECONDS * HZ);
+		mod_timer(&musb->dev_timer, jiffies + POLL_SECONDS * HZ);
 
 	spin_unlock_irqrestore(&musb->lock, flags);
 
@@ -394,7 +375,7 @@ static int davinci_musb_init(struct musb *musb)
 	if (revision == 0)
 		goto fail;
 
-	setup_timer(&otg_workaround, otg_timer, (unsigned long) musb);
+	timer_setup(&musb->dev_timer, otg_timer, 0);
 
 	davinci_musb_source_power(musb, 0, 1);
 
@@ -444,7 +425,7 @@ unregister:
 
 static int davinci_musb_exit(struct musb *musb)
 {
-	del_timer_sync(&otg_workaround);
+	del_timer_sync(&musb->dev_timer);
 
 	/* force VBUS off */
 	if (cpu_is_davinci_dm355()) {
@@ -491,9 +472,14 @@ static int davinci_musb_exit(struct musb *musb)
 }
 
 static const struct musb_platform_ops davinci_ops = {
+	.quirks		= MUSB_DMA_CPPI,
 	.init		= davinci_musb_init,
 	.exit		= davinci_musb_exit,
 
+#ifdef CONFIG_USB_TI_CPPI_DMA
+	.dma_init	= cppi_dma_controller_create,
+	.dma_exit	= cppi_dma_controller_destroy,
+#endif
 	.enable		= davinci_musb_enable,
 	.disable	= davinci_musb_disable,
 

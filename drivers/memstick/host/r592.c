@@ -298,8 +298,7 @@ static int r592_transfer_fifo_dma(struct r592_device *dev)
 	sg_count = dma_map_sg(&dev->pci_dev->dev, &dev->req->sg, 1, is_write ?
 		PCI_DMA_TODEVICE : PCI_DMA_FROMDEVICE);
 
-	if (sg_count != 1 ||
-			(sg_dma_len(&dev->req->sg) < dev->req->sg.length)) {
+	if (sg_count != 1 || sg_dma_len(&dev->req->sg) < R592_LFIFO_SIZE) {
 		message("problem in dma_map_sg");
 		return -EIO;
 	}
@@ -617,9 +616,9 @@ static void r592_update_card_detect(struct r592_device *dev)
 }
 
 /* Timer routine that fires 1 second after last card detection event, */
-static void r592_detect_timer(long unsigned int data)
+static void r592_detect_timer(struct timer_list *t)
 {
-	struct r592_device *dev = (struct r592_device *)data;
+	struct r592_device *dev = from_timer(dev, t, detect_timer);
 	r592_update_card_detect(dev);
 	memstick_detect_change(dev->host);
 }
@@ -754,7 +753,7 @@ static int r592_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 		goto error2;
 
 	pci_set_master(pdev);
-	error = pci_set_dma_mask(pdev, DMA_BIT_MASK(32));
+	error = dma_set_mask(&pdev->dev, DMA_BIT_MASK(32));
 	if (error)
 		goto error3;
 
@@ -771,8 +770,7 @@ static int r592_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	spin_lock_init(&dev->io_thread_lock);
 	init_completion(&dev->dma_done);
 	INIT_KFIFO(dev->pio_fifo);
-	setup_timer(&dev->detect_timer,
-		r592_detect_timer, (long unsigned int)dev);
+	timer_setup(&dev->detect_timer, r592_detect_timer, 0);
 
 	/* Host initialization */
 	host->caps = MEMSTICK_CAP_PAR4;
@@ -787,8 +785,8 @@ static int r592_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	}
 
 	/* This is just a precation, so don't fail */
-	dev->dummy_dma_page = pci_alloc_consistent(pdev, PAGE_SIZE,
-		&dev->dummy_dma_page_physical_address);
+	dev->dummy_dma_page = dma_alloc_coherent(&pdev->dev, PAGE_SIZE,
+		&dev->dummy_dma_page_physical_address, GFP_KERNEL);
 	r592_stop_dma(dev , 0);
 
 	if (request_irq(dev->irq, &r592_irq, IRQF_SHARED,
@@ -805,7 +803,7 @@ error7:
 	free_irq(dev->irq, dev);
 error6:
 	if (dev->dummy_dma_page)
-		pci_free_consistent(pdev, PAGE_SIZE, dev->dummy_dma_page,
+		dma_free_coherent(&pdev->dev, PAGE_SIZE, dev->dummy_dma_page,
 			dev->dummy_dma_page_physical_address);
 
 	kthread_stop(dev->io_thread);
@@ -845,7 +843,7 @@ static void r592_remove(struct pci_dev *pdev)
 	memstick_free_host(dev->host);
 
 	if (dev->dummy_dma_page)
-		pci_free_consistent(pdev, PAGE_SIZE, dev->dummy_dma_page,
+		dma_free_coherent(&pdev->dev, PAGE_SIZE, dev->dummy_dma_page,
 			dev->dummy_dma_page_physical_address);
 }
 

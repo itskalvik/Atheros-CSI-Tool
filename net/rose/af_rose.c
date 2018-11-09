@@ -20,7 +20,7 @@
 #include <linux/in.h>
 #include <linux/slab.h>
 #include <linux/kernel.h>
-#include <linux/sched.h>
+#include <linux/sched/signal.h>
 #include <linux/spinlock.h>
 #include <linux/timer.h>
 #include <linux/string.h>
@@ -34,7 +34,7 @@
 #include <linux/if_arp.h>
 #include <linux/skbuff.h>
 #include <net/sock.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #include <linux/fcntl.h>
 #include <linux/termios.h>
 #include <linux/mm.h>
@@ -192,7 +192,8 @@ static void rose_kill_by_device(struct net_device *dev)
 
 		if (rose->device == dev) {
 			rose_disconnect(s, ENETUNREACH, ROSE_OUT_OF_ORDER, 0);
-			rose->neighbour->use--;
+			if (rose->neighbour)
+				rose->neighbour->use--;
 			rose->device = NULL;
 		}
 	}
@@ -317,9 +318,11 @@ void rose_destroy_socket(struct sock *);
 /*
  *	Handler for deferred kills.
  */
-static void rose_destroy_timer(unsigned long data)
+static void rose_destroy_timer(struct timer_list *t)
 {
-	rose_destroy_socket((struct sock *)data);
+	struct sock *sk = from_timer(sk, t, sk_timer);
+
+	rose_destroy_socket(sk);
 }
 
 /*
@@ -352,8 +355,7 @@ void rose_destroy_socket(struct sock *sk)
 
 	if (sk_has_allocations(sk)) {
 		/* Defer: outstanding buffers */
-		setup_timer(&sk->sk_timer, rose_destroy_timer,
-				(unsigned long)sk);
+		timer_setup(&sk->sk_timer, rose_destroy_timer, 0);
 		sk->sk_timer.expires  = jiffies + 10 * HZ;
 		add_timer(&sk->sk_timer);
 	} else
@@ -520,7 +522,7 @@ static int rose_create(struct net *net, struct socket *sock, int protocol,
 	if (sock->type != SOCK_SEQPACKET || protocol != 0)
 		return -ESOCKTNOSUPPORT;
 
-	sk = sk_alloc(net, PF_ROSE, GFP_ATOMIC, &rose_proto);
+	sk = sk_alloc(net, PF_ROSE, GFP_ATOMIC, &rose_proto, kern);
 	if (sk == NULL)
 		return -ENOMEM;
 
@@ -537,8 +539,8 @@ static int rose_create(struct net *net, struct socket *sock, int protocol,
 	sock->ops    = &rose_proto_ops;
 	sk->sk_protocol = protocol;
 
-	init_timer(&rose->timer);
-	init_timer(&rose->idletimer);
+	timer_setup(&rose->timer, NULL, 0);
+	timer_setup(&rose->idletimer, NULL, 0);
 
 	rose->t1   = msecs_to_jiffies(sysctl_rose_call_request_timeout);
 	rose->t2   = msecs_to_jiffies(sysctl_rose_reset_request_timeout);
@@ -559,7 +561,7 @@ static struct sock *rose_make_new(struct sock *osk)
 	if (osk->sk_type != SOCK_SEQPACKET)
 		return NULL;
 
-	sk = sk_alloc(sock_net(osk), PF_ROSE, GFP_ATOMIC, &rose_proto);
+	sk = sk_alloc(sock_net(osk), PF_ROSE, GFP_ATOMIC, &rose_proto, 0);
 	if (sk == NULL)
 		return NULL;
 
@@ -581,8 +583,8 @@ static struct sock *rose_make_new(struct sock *osk)
 	sk->sk_state    = TCP_ESTABLISHED;
 	sock_copy_flags(sk, osk);
 
-	init_timer(&rose->timer);
-	init_timer(&rose->idletimer);
+	timer_setup(&rose->timer, NULL, 0);
+	timer_setup(&rose->idletimer, NULL, 0);
 
 	orose		= rose_sk(osk);
 	rose->t1	= orose->t1;
@@ -870,7 +872,8 @@ out_release:
 	return err;
 }
 
-static int rose_accept(struct socket *sock, struct socket *newsock, int flags)
+static int rose_accept(struct socket *sock, struct socket *newsock, int flags,
+		       bool kern)
 {
 	struct sk_buff *skb;
 	struct sock *newsk;

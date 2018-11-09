@@ -34,13 +34,6 @@
 			       &node_to_cpu_mask[node])
 
 /*
- * Returns the number of the node containing Node 'nid'.
- * Not implemented here. Multi-level hierarchies detected with
- * the help of node_distance().
- */
-#define parent_node(nid) (nid)
-
-/*
  * Determines the node for a given pci bus
  */
 #define pcibus_to_node(bus) PCI_CONTROLLER(bus)->node
@@ -53,7 +46,7 @@ void build_cpu_to_node_map(void);
 #define topology_physical_package_id(cpu)	(cpu_data(cpu)->socket_id)
 #define topology_core_id(cpu)			(cpu_data(cpu)->core_id)
 #define topology_core_cpumask(cpu)		(&cpu_core_map[cpu])
-#define topology_thread_cpumask(cpu)		(&per_cpu(cpu_sibling_map, cpu))
+#define topology_sibling_cpumask(cpu)		(&per_cpu(cpu_sibling_map, cpu))
 #endif
 
 extern void arch_fix_phys_package_id(int num, u32 slot);

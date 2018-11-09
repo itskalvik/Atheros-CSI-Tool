@@ -1,9 +1,10 @@
-/* bnx2fc_tgt.c: QLogic NetXtreme II Linux FCoE offload driver.
+/* bnx2fc_tgt.c: QLogic Linux FCoE offload driver.
  * Handles operations such as session offload/upload etc, and manages
  * session resources such as connection id and qp resources.
  *
- * Copyright (c) 2008 - 2013 Broadcom Corporation
- * Copyright (c) 2014, QLogic Corporation
+ * Copyright (c) 2008-2013 Broadcom Corporation
+ * Copyright (c) 2014-2016 QLogic Corporation
+ * Copyright (c) 2016-2017 Cavium Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -13,8 +14,8 @@
  */
 
 #include "bnx2fc.h"
-static void bnx2fc_upld_timer(unsigned long data);
-static void bnx2fc_ofld_timer(unsigned long data);
+static void bnx2fc_upld_timer(struct timer_list *t);
+static void bnx2fc_ofld_timer(struct timer_list *t);
 static int bnx2fc_init_tgt(struct bnx2fc_rport *tgt,
 			   struct fcoe_port *port,
 			   struct fc_rport_priv *rdata);
@@ -26,10 +27,10 @@ static void bnx2fc_free_session_resc(struct bnx2fc_hba *hba,
 			      struct bnx2fc_rport *tgt);
 static void bnx2fc_free_conn_id(struct bnx2fc_hba *hba, u32 conn_id);
 
-static void bnx2fc_upld_timer(unsigned long data)
+static void bnx2fc_upld_timer(struct timer_list *t)
 {
 
-	struct bnx2fc_rport *tgt = (struct bnx2fc_rport *)data;
+	struct bnx2fc_rport *tgt = from_timer(tgt, t, upld_timer);
 
 	BNX2FC_TGT_DBG(tgt, "upld_timer - Upload compl not received!!\n");
 	/* fake upload completion */
@@ -39,10 +40,10 @@ static void bnx2fc_upld_timer(unsigned long data)
 	wake_up_interruptible(&tgt->upld_wait);
 }
 
-static void bnx2fc_ofld_timer(unsigned long data)
+static void bnx2fc_ofld_timer(struct timer_list *t)
 {
 
-	struct bnx2fc_rport *tgt = (struct bnx2fc_rport *)data;
+	struct bnx2fc_rport *tgt = from_timer(tgt, t, ofld_timer);
 
 	BNX2FC_TGT_DBG(tgt, "entered bnx2fc_ofld_timer\n");
 	/* NOTE: This function should never be called, as
@@ -64,7 +65,7 @@ static void bnx2fc_ofld_timer(unsigned long data)
 
 static void bnx2fc_ofld_wait(struct bnx2fc_rport *tgt)
 {
-	setup_timer(&tgt->ofld_timer, bnx2fc_ofld_timer, (unsigned long)tgt);
+	timer_setup(&tgt->ofld_timer, bnx2fc_ofld_timer, 0);
 	mod_timer(&tgt->ofld_timer, jiffies + BNX2FC_FW_TIMEOUT);
 
 	wait_event_interruptible(tgt->ofld_wait,
@@ -80,7 +81,6 @@ static void bnx2fc_offload_session(struct fcoe_port *port,
 					struct bnx2fc_rport *tgt,
 					struct fc_rport_priv *rdata)
 {
-	struct fc_lport *lport = rdata->local_port;
 	struct fc_rport *rport = rdata->rport;
 	struct bnx2fc_interface *interface = port->priv;
 	struct bnx2fc_hba *hba = interface->hba;
@@ -160,7 +160,7 @@ ofld_err:
 tgt_init_err:
 	if (tgt->fcoe_conn_id != -1)
 		bnx2fc_free_conn_id(hba, tgt->fcoe_conn_id);
-	lport->tt.rport_logoff(rdata);
+	fc_rport_logoff(rdata);
 }
 
 void bnx2fc_flush_active_ios(struct bnx2fc_rport *tgt)
@@ -277,7 +277,7 @@ void bnx2fc_flush_active_ios(struct bnx2fc_rport *tgt)
 
 static void bnx2fc_upld_wait(struct bnx2fc_rport *tgt)
 {
-	setup_timer(&tgt->upld_timer, bnx2fc_upld_timer, (unsigned long)tgt);
+	timer_setup(&tgt->upld_timer, bnx2fc_upld_timer, 0);
 	mod_timer(&tgt->upld_timer, jiffies + BNX2FC_FW_TIMEOUT);
 	wait_event_interruptible(tgt->upld_wait,
 				 (test_bit(
@@ -559,12 +559,6 @@ void bnx2fc_rport_event_handler(struct fc_lport *lport,
 		if ((hba->wait_for_link_down) &&
 		    (hba->num_ofld_sess == 0)) {
 			wake_up_interruptible(&hba->shutdown_wait);
-		}
-		if (test_bit(BNX2FC_FLAG_EXPL_LOGO, &tgt->flags)) {
-			printk(KERN_ERR PFX "Relogin to the tgt\n");
-			mutex_lock(&lport->disc.disc_mutex);
-			lport->tt.rport_login(rdata);
-			mutex_unlock(&lport->disc.disc_mutex);
 		}
 		mutex_unlock(&hba->hba_mutex);
 

@@ -15,7 +15,7 @@
 
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/sched.h>
+#include <linux/sched/signal.h>
 #include <linux/of_address.h>
 #include <linux/of_irq.h>
 #include <linux/of_platform.h>
@@ -322,7 +322,7 @@ static const struct mpc_i2c_divider mpc_i2c_dividers_8xxx[] = {
 
 static u32 mpc_i2c_get_sec_cfg_8xxx(void)
 {
-	struct device_node *node = NULL;
+	struct device_node *node;
 	u32 __iomem *reg;
 	u32 val = 0;
 
@@ -700,7 +700,7 @@ static int fsl_i2c_probe(struct platform_device *op)
 		}
 	}
 
-	if (of_get_property(op->dev.of_node, "fsl,preserve-clocking", NULL)) {
+	if (of_property_read_bool(op->dev.of_node, "fsl,preserve-clocking")) {
 		clock = MPC_I2C_CLOCK_PRESERVE;
 	} else {
 		prop = of_get_property(op->dev.of_node, "clock-frequency",
@@ -737,10 +737,8 @@ static int fsl_i2c_probe(struct platform_device *op)
 	i2c->adap.dev.of_node = of_node_get(op->dev.of_node);
 
 	result = i2c_add_adapter(&i2c->adap);
-	if (result < 0) {
-		dev_err(i2c->dev, "failed to add adapter\n");
+	if (result < 0)
 		goto fail_add;
-	}
 
 	return result;
 

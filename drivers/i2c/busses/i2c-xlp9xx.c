@@ -6,6 +6,8 @@
  * warranty of any kind, whether express or implied.
  */
 
+#include <linux/acpi.h>
+#include <linux/clk.h>
 #include <linux/completion.h>
 #include <linux/i2c.h>
 #include <linux/init.h>
@@ -80,9 +82,12 @@ struct xlp9xx_i2c_dev {
 	struct completion msg_complete;
 	int irq;
 	bool msg_read;
+	bool len_recv;
+	bool client_pec;
 	u32 __iomem *base;
 	u32 msg_buf_remaining;
 	u32 msg_len;
+	u32 ip_clk_hz;
 	u32 clk_hz;
 	u32 msg_err;
 	u8 *msg_buf;
@@ -140,10 +145,25 @@ static void xlp9xx_i2c_fill_tx_fifo(struct xlp9xx_i2c_dev *priv)
 static void xlp9xx_i2c_drain_rx_fifo(struct xlp9xx_i2c_dev *priv)
 {
 	u32 len, i;
-	u8 *buf = priv->msg_buf;
+	u8 rlen, *buf = priv->msg_buf;
 
 	len = xlp9xx_read_i2c_reg(priv, XLP9XX_I2C_FIFOWCNT) &
 				  XLP9XX_I2C_FIFO_WCNT_MASK;
+	if (!len)
+		return;
+	if (priv->len_recv) {
+		/* read length byte */
+		rlen = xlp9xx_read_i2c_reg(priv, XLP9XX_I2C_MRXFIFO);
+		*buf++ = rlen;
+		len--;
+		if (priv->client_pec)
+			++rlen;
+		/* update remaining bytes and message length */
+		priv->msg_buf_remaining = rlen;
+		priv->msg_len = rlen + 1;
+		priv->len_recv = false;
+	}
+
 	len = min(priv->msg_buf_remaining, len);
 	for (i = 0; i < len; i++, buf++)
 		*buf = xlp9xx_read_i2c_reg(priv, XLP9XX_I2C_MRXFIFO);
@@ -212,7 +232,7 @@ static int xlp9xx_i2c_init(struct xlp9xx_i2c_dev *priv)
 	 * The controller uses 5 * SCL clock internally.
 	 * So prescale value should be divided by 5.
 	 */
-	prescale = DIV_ROUND_UP(XLP9XX_I2C_IP_CLK_FREQ, priv->clk_hz);
+	prescale = DIV_ROUND_UP(priv->ip_clk_hz, priv->clk_hz);
 	prescale = ((prescale - 8) / 5) - 1;
 	xlp9xx_write_i2c_reg(priv, XLP9XX_I2C_CTRL, XLP9XX_I2C_CTRL_RST);
 	xlp9xx_write_i2c_reg(priv, XLP9XX_I2C_CTRL, XLP9XX_I2C_CTRL_EN |
@@ -227,7 +247,7 @@ static int xlp9xx_i2c_xfer_msg(struct xlp9xx_i2c_dev *priv, struct i2c_msg *msg,
 			       int last_msg)
 {
 	unsigned long timeleft;
-	u32 intr_mask, cmd, val;
+	u32 intr_mask, cmd, val, len;
 
 	priv->msg_buf = msg->buf;
 	priv->msg_buf_remaining = priv->msg_len = msg->len;
@@ -260,9 +280,13 @@ static int xlp9xx_i2c_xfer_msg(struct xlp9xx_i2c_dev *priv, struct i2c_msg *msg,
 	else
 		val &= ~XLP9XX_I2C_CTRL_ADDMODE;
 
+	priv->len_recv = msg->flags & I2C_M_RECV_LEN;
+	len = priv->len_recv ? XLP9XX_I2C_FIFO_SIZE : msg->len;
+	priv->client_pec = msg->flags & I2C_CLIENT_PEC;
+
 	/* set data length to be transferred */
 	val = (val & ~XLP9XX_I2C_CTRL_MCTLEN_MASK) |
-	      (msg->len << XLP9XX_I2C_CTRL_MCTLEN_SHIFT);
+	      (len << XLP9XX_I2C_CTRL_MCTLEN_SHIFT);
 	xlp9xx_write_i2c_reg(priv, XLP9XX_I2C_CTRL, val);
 
 	/* fill fifo during tx */
@@ -309,6 +333,9 @@ static int xlp9xx_i2c_xfer_msg(struct xlp9xx_i2c_dev *priv, struct i2c_msg *msg,
 		return -ETIMEDOUT;
 	}
 
+	/* update msg->len with actual received length */
+	if (msg->flags & I2C_M_RECV_LEN)
+		msg->len = priv->msg_len;
 	return 0;
 }
 
@@ -333,7 +360,7 @@ static u32 xlp9xx_i2c_functionality(struct i2c_adapter *adapter)
 		I2C_FUNC_10BIT_ADDR;
 }
 
-static struct i2c_algorithm xlp9xx_i2c_algo = {
+static const struct i2c_algorithm xlp9xx_i2c_algo = {
 	.master_xfer = xlp9xx_i2c_xfer,
 	.functionality = xlp9xx_i2c_functionality,
 };
@@ -341,11 +368,20 @@ static struct i2c_algorithm xlp9xx_i2c_algo = {
 static int xlp9xx_i2c_get_frequency(struct platform_device *pdev,
 				    struct xlp9xx_i2c_dev *priv)
 {
-	struct device_node *np = pdev->dev.of_node;
+	struct clk *clk;
 	u32 freq;
 	int err;
 
-	err = of_property_read_u32(np, "clock-frequency", &freq);
+	clk = devm_clk_get(&pdev->dev, NULL);
+	if (IS_ERR(clk)) {
+		priv->ip_clk_hz = XLP9XX_I2C_IP_CLK_FREQ;
+		dev_dbg(&pdev->dev, "using default input frequency %u\n",
+			priv->ip_clk_hz);
+	} else {
+		priv->ip_clk_hz = clk_get_rate(clk);
+	}
+
+	err = device_property_read_u32(&pdev->dev, "clock-frequency", &freq);
 	if (err) {
 		freq = XLP9XX_I2C_DEFAULT_FREQ;
 		dev_dbg(&pdev->dev, "using default frequency %u\n", freq);
@@ -393,6 +429,8 @@ static int xlp9xx_i2c_probe(struct platform_device *pdev)
 	init_completion(&priv->msg_complete);
 	priv->adapter.dev.parent = &pdev->dev;
 	priv->adapter.algo = &xlp9xx_i2c_algo;
+	priv->adapter.class = I2C_CLASS_HWMON;
+	ACPI_COMPANION_SET(&priv->adapter.dev, ACPI_COMPANION(&pdev->dev));
 	priv->adapter.dev.of_node = pdev->dev.of_node;
 	priv->dev = &pdev->dev;
 
@@ -400,10 +438,8 @@ static int xlp9xx_i2c_probe(struct platform_device *pdev)
 	i2c_set_adapdata(&priv->adapter, priv);
 
 	err = i2c_add_adapter(&priv->adapter);
-	if (err) {
-		dev_err(&pdev->dev, "failed to add I2C adapter!\n");
+	if (err)
 		return err;
-	}
 
 	platform_set_drvdata(pdev, priv);
 	dev_dbg(&pdev->dev, "I2C bus:%d added\n", priv->adapter.nr);
@@ -428,6 +464,16 @@ static const struct of_device_id xlp9xx_i2c_of_match[] = {
 	{ .compatible = "netlogic,xlp980-i2c", },
 	{ /* sentinel */ },
 };
+MODULE_DEVICE_TABLE(of, xlp9xx_i2c_of_match);
+
+#ifdef CONFIG_ACPI
+static const struct acpi_device_id xlp9xx_i2c_acpi_ids[] = {
+	{"BRCM9007", 0},
+	{"CAV9007",  0},
+	{}
+};
+MODULE_DEVICE_TABLE(acpi, xlp9xx_i2c_acpi_ids);
+#endif
 
 static struct platform_driver xlp9xx_i2c_driver = {
 	.probe = xlp9xx_i2c_probe,
@@ -435,6 +481,7 @@ static struct platform_driver xlp9xx_i2c_driver = {
 	.driver = {
 		.name = "xlp9xx-i2c",
 		.of_match_table = xlp9xx_i2c_of_match,
+		.acpi_match_table = ACPI_PTR(xlp9xx_i2c_acpi_ids),
 	},
 };
 

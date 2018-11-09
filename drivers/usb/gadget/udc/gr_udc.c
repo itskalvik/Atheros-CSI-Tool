@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * USB Peripheral Controller driver for Aeroflex Gaisler GRUSBDC.
  *
@@ -8,11 +9,6 @@
  *
  * Full documentation of the GRUSBDC core can be found here:
  * http://www.gaisler.com/products/grlib/grip.pdf
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License as published by the
- * Free Software Foundation; either version 2 of the License, or (at your
- * option) any later version.
  *
  * Contributors:
  * - Andreas Larsson <andreas@gaisler.com>
@@ -253,13 +249,12 @@ static struct gr_dma_desc *gr_alloc_dma_desc(struct gr_ep *ep, gfp_t gfp_flags)
 	dma_addr_t paddr;
 	struct gr_dma_desc *dma_desc;
 
-	dma_desc = dma_pool_alloc(ep->dev->desc_pool, gfp_flags, &paddr);
+	dma_desc = dma_pool_zalloc(ep->dev->desc_pool, gfp_flags, &paddr);
 	if (!dma_desc) {
 		dev_err(ep->dev->dev, "Could not allocate from DMA pool\n");
 		return NULL;
 	}
 
-	memset(dma_desc, 0, sizeof(*dma_desc));
 	dma_desc->paddr = paddr;
 
 	return dma_desc;
@@ -1262,7 +1257,7 @@ static int gr_handle_in_ep(struct gr_ep *ep)
 	if (!req->last_desc)
 		return 0;
 
-	if (ACCESS_ONCE(req->last_desc->ctrl) & GR_DESC_IN_CTRL_EN)
+	if (READ_ONCE(req->last_desc->ctrl) & GR_DESC_IN_CTRL_EN)
 		return 0; /* Not put in hardware buffers yet */
 
 	if (gr_read32(&ep->regs->epstat) & (GR_EPSTAT_B1 | GR_EPSTAT_B0))
@@ -1291,7 +1286,7 @@ static int gr_handle_out_ep(struct gr_ep *ep)
 	if (!req->curr_desc)
 		return 0;
 
-	ctrl = ACCESS_ONCE(req->curr_desc->ctrl);
+	ctrl = READ_ONCE(req->curr_desc->ctrl);
 	if (ctrl & GR_DESC_OUT_CTRL_EN)
 		return 0; /* Not received yet */
 
@@ -1539,8 +1534,8 @@ static int gr_ep_enable(struct usb_ep *_ep,
 	 * Bits 10-0 set the max payload. 12-11 set the number of
 	 * additional transactions.
 	 */
-	max = 0x7ff & usb_endpoint_maxp(desc);
-	nt = 0x3 & (usb_endpoint_maxp(desc) >> 11);
+	max = usb_endpoint_maxp(desc);
+	nt = usb_endpoint_maxp_mult(desc) - 1;
 	buffer_size = GR_BUFFER_SIZE(epctrl);
 	if (nt && (mode == 0 || mode == 2)) {
 		dev_err(dev->dev,
@@ -1842,7 +1837,7 @@ static void gr_fifo_flush(struct usb_ep *_ep)
 	spin_unlock(&ep->dev->lock);
 }
 
-static struct usb_ep_ops gr_ep_ops = {
+static const struct usb_ep_ops gr_ep_ops = {
 	.enable		= gr_ep_enable,
 	.disable	= gr_ep_disable,
 
@@ -2018,11 +2013,22 @@ static int gr_ep_init(struct gr_udc *dev, int num, int is_in, u32 maxplimit)
 
 		usb_ep_set_maxpacket_limit(&ep->ep, MAX_CTRL_PL_SIZE);
 		ep->bytes_per_buffer = MAX_CTRL_PL_SIZE;
+
+		ep->ep.caps.type_control = true;
 	} else {
 		usb_ep_set_maxpacket_limit(&ep->ep, (u16)maxplimit);
 		list_add_tail(&ep->ep.ep_list, &dev->gadget.ep_list);
+
+		ep->ep.caps.type_iso = true;
+		ep->ep.caps.type_bulk = true;
+		ep->ep.caps.type_int = true;
 	}
 	list_add_tail(&ep->ep_list, &dev->ep_list);
+
+	if (is_in)
+		ep->ep.caps.dir_in = true;
+	else
+		ep->ep.caps.dir_out = true;
 
 	ep->tailbuf = dma_alloc_coherent(dev->dev, ep->ep.maxpacket_limit,
 					 &ep->tailbuf_paddr, GFP_ATOMIC);
@@ -2106,8 +2112,7 @@ static int gr_remove(struct platform_device *pdev)
 		return -EBUSY;
 
 	gr_dfs_delete(dev);
-	if (dev->desc_pool)
-		dma_pool_destroy(dev->desc_pool);
+	dma_pool_destroy(dev->desc_pool);
 	platform_set_drvdata(pdev, NULL);
 
 	gr_free_request(&dev->epi[0].ep, &dev->ep0reqi->req);

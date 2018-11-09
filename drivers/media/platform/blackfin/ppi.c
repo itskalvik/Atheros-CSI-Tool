@@ -11,10 +11,6 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
 #include <linux/module.h>
@@ -214,6 +210,8 @@ static int ppi_set_params(struct ppi_if *ppi, struct ppi_params *params)
 	if (params->dlen > 24 || params->dlen <= 0)
 		return -EINVAL;
 	pctrl = devm_pinctrl_get(ppi->dev);
+	if (IS_ERR(pctrl))
+		return PTR_ERR(pctrl);
 	pstate = pinctrl_lookup_state(pctrl,
 				      pin_state[(params->dlen + 7) / 8 - 1]);
 	if (pinctrl_select_state(pctrl, pstate))
@@ -340,7 +338,6 @@ struct ppi_if *ppi_create_instance(struct platform_device *pdev,
 	ppi = kzalloc(sizeof(*ppi), GFP_KERNEL);
 	if (!ppi) {
 		peripheral_free_list(info->pin_req);
-		dev_err(&pdev->dev, "unable to allocate memory for ppi handle\n");
 		return NULL;
 	}
 	ppi->ops = &ppi_ops;

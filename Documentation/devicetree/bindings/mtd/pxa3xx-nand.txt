@@ -5,12 +5,17 @@ Required properties:
  - compatible:		Should be set to one of the following:
 			marvell,pxa3xx-nand
 			marvell,armada370-nand
+			marvell,armada-8k-nand
  - reg: 		The register base for the controller
  - interrupts:		The interrupt to map
  - #address-cells:	Set to <1> if the node includes partitions
+ - marvell,system-controller: Set to retrieve the syscon node that handles
+			NAND controller related registers (only required
+			with marvell,armada-8k-nand compatible).
 
 Optional properties:
 
+ - dmas:			dma data channel, see dma.txt binding doc
  - marvell,nand-enable-arbiter:	Set to enable the bus arbiter
  - marvell,nand-keep-config:	Set to keep the NAND controller config as set
 				by the bootloader
@@ -32,6 +37,8 @@ Example:
 		compatible = "marvell,pxa3xx-nand";
 		reg = <0x43100000 90>;
 		interrupts = <45>;
+		dmas = <&pdma 97 0>;
+		dma-names = "data";
 		#address-cells = <1>;
 
 		marvell,nand-enable-arbiter;

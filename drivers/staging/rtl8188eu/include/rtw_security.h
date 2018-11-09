@@ -11,11 +11,6 @@
  * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
  * more details.
  *
- * You should have received a copy of the GNU General Public License along with
- * this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110, USA
- *
- *
  ******************************************************************************/
 #ifndef __RTW_SECURITY_H_
 #define __RTW_SECURITY_H_
@@ -105,20 +100,26 @@ struct rt_pmkid_list {
 
 struct security_priv {
 	u32	  dot11AuthAlgrthm;	/*  802.11 auth, could be open,
-					 * shared, 8021x and authswitch */
+					 * shared, 8021x and authswitch
+					 */
 	u32	  dot11PrivacyAlgrthm;	/*  This specify the privacy for
-					 * shared auth. algorithm. */
+					 * shared auth. algorithm.
+					 */
 	/* WEP */
 	u32	  dot11PrivacyKeyIndex;	/*  this is only valid for legendary
-					 * wep, 0~3 for key id.(tx key index) */
+					 * wep, 0~3 for key id.(tx key index)
+					 */
 	union Keytype dot11DefKey[4];	/*  this is only valid for def. key */
 	u32	dot11DefKeylen[4];
 	u32 dot118021XGrpPrivacy;	/*  This specify the privacy algthm.
-					 * used for Grp key */
+					 * used for Grp key
+					 */
 	u32	dot118021XGrpKeyid;	/*  key id used for Grp Key
-					 * ( tx key index) */
+					 * ( tx key index)
+					 */
 	union Keytype	dot118021XGrpKey[4];	/*  802.1x Group Key,
-						 * for inx0 and inx1 */
+						 * for inx0 and inx1
+						 */
 	union Keytype	dot118021XGrptxmickey[4];
 	union Keytype	dot118021XGrprxmickey[4];
 	union pn48	dot11Grptxpn;		/* PN48 used for Grp Key xmit.*/
@@ -138,13 +139,13 @@ struct security_priv {
 	u8	busetkipkey;
 	u8	bcheck_grpkey;
 	u8	bgrpkey_handshake;
-	s32	sw_encrypt;/* from registry_priv */
-	s32	sw_decrypt;/* from registry_priv */
 	s32	hw_decrypted;/* if the rx packets is hw_decrypted==false,i
-			      * it means the hw has not been ready. */
+			      * it means the hw has not been ready.
+			      */
 
 	/* keeps the auth_type & enc_status from upper layer
-	 * ioctl(wpa_supplicant or wzc) */
+	 * ioctl(wpa_supplicant or wzc)
+	 */
 	u32 ndisauthtype;	/*  NDIS_802_11_AUTHENTICATION_MODE */
 	u32 ndisencryptstatus;	/*  NDIS_802_11_ENCRYPTION_STATUS */
 	struct wlan_bssid_ex sec_bss;  /* for joinbss (h2c buffer) usage */
@@ -167,12 +168,6 @@ struct security_priv {
 	struct rt_pmkid_list PMKIDList[NUM_PMKID_CACHE];
 	u8	PMKIDIndex;
 	u8 bWepDefaultKeyIdxSet;
-};
-
-struct sha256_state {
-	u64 length;
-	u32 state[8], curlen;
-	u8 buf[64];
 };
 
 #define GET_ENCRY_ALGO(psecuritypriv, psta, encry_algo, bmcst)		\
@@ -266,46 +261,11 @@ static inline u32 rotr(u32 val, int bits)
 #define TE2(i) rotr(Te0[((i) >> 8) & 0xff], 16)
 #define TE3(i) rotr(Te0[(i) & 0xff], 24)
 
-#define GETU32(pt) (((u32)(pt)[0] << 24) ^ ((u32)(pt)[1] << 16) ^ \
-			((u32)(pt)[2] <<  8) ^ ((u32)(pt)[3]))
-
-#define PUTU32(ct, st) { \
-(ct)[0] = (u8)((st) >> 24); (ct)[1] = (u8)((st) >> 16); \
-(ct)[2] = (u8)((st) >>  8); (ct)[3] = (u8)(st); }
-
-#define WPA_GET_BE32(a) ((((u32)(a)[0]) << 24) | (((u32)(a)[1]) << 16) | \
-			 (((u32)(a)[2]) << 8) | ((u32)(a)[3]))
-
-#define WPA_PUT_LE16(a, val)			\
-	do {					\
-		(a)[1] = ((u16)(val)) >> 8;	\
-		(a)[0] = ((u16)(val)) & 0xff;	\
-	} while (0)
-
-#define WPA_PUT_BE32(a, val)					\
-	do {							\
-		(a)[0] = (u8)((((u32)(val)) >> 24) & 0xff);	\
-		(a)[1] = (u8)((((u32)(val)) >> 16) & 0xff);	\
-		(a)[2] = (u8)((((u32)(val)) >> 8) & 0xff);	\
-		(a)[3] = (u8)(((u32)(val)) & 0xff);		\
-	} while (0)
-
-#define WPA_PUT_BE64(a, val)				\
-	do {						\
-		(a)[0] = (u8)(((u64)(val)) >> 56);	\
-		(a)[1] = (u8)(((u64)(val)) >> 48);	\
-		(a)[2] = (u8)(((u64)(val)) >> 40);	\
-		(a)[3] = (u8)(((u64)(val)) >> 32);	\
-		(a)[4] = (u8)(((u64)(val)) >> 24);	\
-		(a)[5] = (u8)(((u64)(val)) >> 16);	\
-		(a)[6] = (u8)(((u64)(val)) >> 8);	\
-		(a)[7] = (u8)(((u64)(val)) & 0xff);	\
-	} while (0)
-
 /* ===== start - public domain SHA256 implementation ===== */
 
 /* This is based on SHA256 implementation in LibTomCrypt that was released into
- * public domain by Tom St Denis. */
+ * public domain by Tom St Denis.
+ */
 
 /* the K array */
 static const unsigned long K[64] = {
@@ -328,7 +288,7 @@ static const unsigned long K[64] = {
 #define RORc(x, y) \
 	(((((unsigned long)(x) & 0xFFFFFFFFUL) >> (unsigned long)((y)&31)) | \
 	 ((unsigned long)(x) << (unsigned long)(32-((y)&31)))) & 0xFFFFFFFFUL)
-#define Ch(x, y , z)       (z ^ (x & (y ^ z)))
+#define Ch(x, y, z)       (z ^ (x & (y ^ z)))
 #define Maj(x, y, z)      (((x | y) & z) | (x & y))
 #define S(x, n)         RORc((x), (n))
 #define R(x, n)         (((x)&0xFFFFFFFFUL)>>(n))
@@ -336,9 +296,6 @@ static const unsigned long K[64] = {
 #define Sigma1(x)       (S(x, 6) ^ S(x, 11) ^ S(x, 25))
 #define Gamma0(x)       (S(x, 7) ^ S(x, 18) ^ R(x, 3))
 #define Gamma1(x)       (S(x, 17) ^ S(x, 19) ^ R(x, 10))
-#ifndef MIN
-#define MIN(x, y) (((x) < (y)) ? (x) : (y))
-#endif
 
 void rtw_secmicsetkey(struct mic_data *pmicdata, u8 *key);
 void rtw_secmicappendbyte(struct mic_data *pmicdata, u8 b);

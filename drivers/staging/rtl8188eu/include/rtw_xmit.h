@@ -11,11 +11,6 @@
  * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
  * more details.
  *
- * You should have received a copy of the GNU General Public License along with
- * this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110, USA
- *
- *
  ******************************************************************************/
 #ifndef _RTW_XMIT_H_
 #define _RTW_XMIT_H_
@@ -118,14 +113,15 @@ struct pkt_attrib {
 	u8	dhcp_pkt;
 	u16	ether_type;
 	u16	seqnum;
-	u16	pkt_hdrlen;	/* the original 802.3 pkt header len */
 	u16	hdrlen;		/* the WLAN Header Len */
 	u32	pktlen;		/* the original 802.3 pkt raw_data len (not include
-				 * ether_hdr data) */
+				 * ether_hdr data)
+				 */
 	u32	last_txcmdsz;
 	u8	nr_frags;
 	u8	encrypt;	/* when 0 indicate no encrypt. when non-zero,
-				 * indicate the encrypt algorith */
+				 * indicate the encrypt algorith
+				 */
 	u8	iv_len;
 	u8	icv_len;
 	u8	iv[18];
@@ -197,7 +193,6 @@ enum {
 void rtw_sctx_init(struct submit_ctx *sctx, int timeout_ms);
 int rtw_sctx_wait(struct submit_ctx *sctx);
 void rtw_sctx_done_err(struct submit_ctx **sctx, int status);
-void rtw_sctx_done(struct submit_ctx **sctx);
 
 struct xmit_buf {
 	struct list_head list;
@@ -241,7 +236,8 @@ struct sta_xmit_priv {
 	spinlock_t lock;
 	int	option;
 	int	apsd_setting;	/* When bit mask is on, the associated edca
-				 * queue supports APSD. */
+				 * queue supports APSD.
+				 */
 	struct tx_servq	be_q;			/* priority == 0,3 */
 	struct tx_servq	bk_q;			/* priority == 1,2 */
 	struct tx_servq	vi_q;			/* priority == 4,5 */
@@ -262,15 +258,8 @@ struct	hw_txqueue {
 	int	ac_tag;
 };
 
-struct agg_pkt_info {
-	u16 offset;
-	u16 pkt_len;
-};
-
 struct	xmit_priv {
 	spinlock_t lock;
-	struct semaphore xmit_sema;
-	struct semaphore terminate_xmitthread_sema;
 	struct __queue be_pending;
 	struct __queue bk_pending;
 	struct __queue vi_pending;
@@ -294,8 +283,8 @@ struct	xmit_priv {
 	u8	hwxmit_entry;
 	u8	wmm_para_seq[4];/* sequence for wmm ac parameter strength
 				 * from large to small. it's value is 0->vo,
-				 * 1->vi, 2->be, 3->bk. */
-	struct semaphore tx_retevt;/* all tx return event; */
+				 * 1->vi, 2->be, 3->bk.
+				 */
 	u8		txirp_cnt;/*  */
 	struct tasklet_struct xmit_tasklet;
 	/* per AC pending irp */

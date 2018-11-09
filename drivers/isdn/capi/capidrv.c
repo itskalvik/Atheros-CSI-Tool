@@ -516,7 +516,7 @@ static void send_message(capidrv_contr *card, _cmsg *cmsg)
 		printk(KERN_ERR "capidrv::send_message: can't allocate mem\n");
 		return;
 	}
-	memcpy(skb_put(skb, len), cmsg->buf, len);
+	skb_put_data(skb, cmsg->buf, len);
 	if (capi20_put_message(&global.ap, skb) != CAPI_NOERROR)
 		kfree_skb(skb);
 }
@@ -2235,9 +2235,9 @@ static void send_listen(capidrv_contr *card)
 	send_message(card, &cmdcmsg);
 }
 
-static void listentimerfunc(unsigned long x)
+static void listentimerfunc(struct timer_list *t)
 {
-	capidrv_contr *card = (capidrv_contr *)x;
+	capidrv_contr *card = from_timer(card, t, listentimer);
 	if (card->state != ST_LISTEN_NONE && card->state != ST_LISTEN_ACTIVE)
 		printk(KERN_ERR "%s: controller dead ??\n", card->name);
 	send_listen(card);
@@ -2264,7 +2264,7 @@ static int capidrv_addcontr(u16 contr, struct capi_profile *profp)
 		return -1;
 	}
 	card->owner = THIS_MODULE;
-	init_timer(&card->listentimer);
+	timer_setup(&card->listentimer, listentimerfunc, 0);
 	strcpy(card->name, id);
 	card->contrnr = contr;
 	card->nbchan = profp->nbchannel;
@@ -2331,8 +2331,6 @@ static int capidrv_addcontr(u16 contr, struct capi_profile *profp)
 	card->cipmask = 0x1FFF03FF;	/* any */
 	card->cipmask2 = 0;
 
-	card->listentimer.data = (unsigned long)card;
-	card->listentimer.function = listentimerfunc;
 	send_listen(card);
 	mod_timer(&card->listentimer, jiffies + 60 * HZ);
 

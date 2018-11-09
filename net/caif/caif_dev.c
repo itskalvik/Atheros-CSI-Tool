@@ -52,7 +52,7 @@ struct caif_net {
 	struct caif_device_entry_list caifdevs;
 };
 
-static int caif_net_id;
+static unsigned int caif_net_id;
 static int q_high = 50; /* Percent */
 
 struct cfcnfg *get_cfcnfg(struct net *net)
@@ -177,7 +177,7 @@ static int transmit(struct cflayer *layer, struct cfpkt *pkt)
 	skb->protocol = htons(ETH_P_CAIF);
 
 	/* Check if we need to handle xoff */
-	if (likely(caifd->netdev->tx_queue_len == 0))
+	if (likely(caifd->netdev->priv_flags & IFF_NO_QUEUE))
 		goto noxoff;
 
 	if (unlikely(caifd->xoff))
@@ -334,9 +334,8 @@ void caif_enroll_dev(struct net_device *dev, struct caif_dev_common *caifdev,
 	mutex_lock(&caifdevs->lock);
 	list_add_rcu(&caifd->list, &caifdevs->list);
 
-	strncpy(caifd->layer.name, dev->name,
-		sizeof(caifd->layer.name) - 1);
-	caifd->layer.name[sizeof(caifd->layer.name) - 1] = 0;
+	strlcpy(caifd->layer.name, dev->name,
+		sizeof(caifd->layer.name));
 	caifd->layer.transmit = transmit;
 	cfcnfg_add_phy_layer(cfg,
 				dev,

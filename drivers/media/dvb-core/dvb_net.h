@@ -13,10 +13,6 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
- *
  */
 
 #ifndef _DVB_NET_H_
@@ -34,6 +30,22 @@
 
 #ifdef CONFIG_DVB_NET
 
+/**
+ * struct dvb_net - describes a DVB network interface
+ *
+ * @dvbdev:		pointer to &struct dvb_device.
+ * @device:		array of pointers to &struct net_device.
+ * @state:		array of integers to each net device. A value
+ *			different than zero means that the interface is
+ *			in usage.
+ * @exit:		flag to indicate when the device is being removed.
+ * @demux:		pointer to &struct dmx_demux.
+ * @ioctl_mutex:	protect access to this struct.
+ *
+ * Currently, the core supports up to %DVB_NET_DEVICES_MAX (10) network
+ * devices.
+ */
+
 struct dvb_net {
 	struct dvb_device *dvbdev;
 	struct net_device *device[DVB_NET_DEVICES_MAX];
@@ -43,8 +55,22 @@ struct dvb_net {
 	struct mutex ioctl_mutex;
 };
 
-void dvb_net_release(struct dvb_net *);
-int  dvb_net_init(struct dvb_adapter *, struct dvb_net *, struct dmx_demux *);
+/**
+ * dvb_net_init - nitializes a digital TV network device and registers it.
+ *
+ * @adap:	pointer to &struct dvb_adapter.
+ * @dvbnet:	pointer to &struct dvb_net.
+ * @dmxdemux:	pointer to &struct dmx_demux.
+ */
+int dvb_net_init(struct dvb_adapter *adap, struct dvb_net *dvbnet,
+		  struct dmx_demux *dmxdemux);
+
+/**
+ * dvb_net_release - releases a digital TV network device and unregisters it.
+ *
+ * @dvbnet:	pointer to &struct dvb_net.
+ */
+void dvb_net_release(struct dvb_net *dvbnet);
 
 #else
 

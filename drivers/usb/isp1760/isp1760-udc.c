@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Driver for the NXP ISP1761 device controller
  *
@@ -5,10 +6,6 @@
  *
  * Contacts:
  *	Laurent Pinchart <laurent.pinchart@ideasonboard.com>
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * version 2 as published by the Free Software Foundation.
  */
 
 #include <linux/interrupt.h>
@@ -812,6 +809,8 @@ static struct usb_request *isp1760_ep_alloc_request(struct usb_ep *ep,
 	struct isp1760_request *req;
 
 	req = kzalloc(sizeof(*req), gfp_flags);
+	if (!req)
+		return NULL;
 
 	return &req->req;
 }
@@ -1248,7 +1247,7 @@ static int isp1760_udc_stop(struct usb_gadget *gadget)
 	return 0;
 }
 
-static struct usb_gadget_ops isp1760_udc_ops = {
+static const struct usb_gadget_ops isp1760_udc_ops = {
 	.get_frame = isp1760_udc_get_frame,
 	.wakeup = isp1760_udc_wakeup,
 	.set_selfpowered = isp1760_udc_set_selfpowered,
@@ -1329,9 +1328,9 @@ static irqreturn_t isp1760_udc_irq(int irq, void *dev)
 	return status ? IRQ_HANDLED : IRQ_NONE;
 }
 
-static void isp1760_udc_vbus_poll(unsigned long data)
+static void isp1760_udc_vbus_poll(struct timer_list *t)
 {
-	struct isp1760_udc *udc = (struct isp1760_udc *)data;
+	struct isp1760_udc *udc = from_timer(udc, t, vbus_timer);
 	unsigned long flags;
 
 	spin_lock_irqsave(&udc->lock, flags);
@@ -1380,14 +1379,25 @@ static void isp1760_udc_init_eps(struct isp1760_udc *udc)
 		 * This fits in the 8kB FIFO without double-buffering.
 		 */
 		if (ep_num == 0) {
-			ep->ep.maxpacket = 64;
+			usb_ep_set_maxpacket_limit(&ep->ep, 64);
+			ep->ep.caps.type_control = true;
+			ep->ep.caps.dir_in = true;
+			ep->ep.caps.dir_out = true;
 			ep->maxpacket = 64;
 			udc->gadget.ep0 = &ep->ep;
 		} else {
-			ep->ep.maxpacket = 512;
+			usb_ep_set_maxpacket_limit(&ep->ep, 512);
+			ep->ep.caps.type_iso = true;
+			ep->ep.caps.type_bulk = true;
+			ep->ep.caps.type_int = true;
 			ep->maxpacket = 0;
 			list_add_tail(&ep->ep.ep_list, &udc->gadget.ep_list);
 		}
+
+		if (is_in)
+			ep->ep.caps.dir_in = true;
+		else
+			ep->ep.caps.dir_out = true;
 	}
 }
 
@@ -1439,8 +1449,7 @@ int isp1760_udc_register(struct isp1760_device *isp, int irq,
 	udc->regs = isp->regs;
 
 	spin_lock_init(&udc->lock);
-	setup_timer(&udc->vbus_timer, isp1760_udc_vbus_poll,
-		    (unsigned long)udc);
+	timer_setup(&udc->vbus_timer, isp1760_udc_vbus_poll, 0);
 
 	ret = isp1760_udc_init(udc);
 	if (ret < 0)

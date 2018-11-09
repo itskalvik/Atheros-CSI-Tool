@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * altera_uart.c -- Altera UART driver
  *
@@ -6,11 +7,6 @@
  * (C) Copyright 2003-2007, Greg Ungerer <gerg@snapgear.com>
  * (C) Copyright 2008, Thomas Chou <thomas@wytron.com.tw>
  * (C) Copyright 2010, Tobias Klauser <tklauser@distanz.ch>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
  */
 
 #include <linux/kernel.h>
@@ -288,10 +284,10 @@ static irqreturn_t altera_uart_interrupt(int irq, void *data)
 	return IRQ_RETVAL(isr);
 }
 
-static void altera_uart_timer(unsigned long data)
+static void altera_uart_timer(struct timer_list *t)
 {
-	struct uart_port *port = (void *)data;
-	struct altera_uart *pp = container_of(port, struct altera_uart, port);
+	struct altera_uart *pp = from_timer(pp, t, tmr);
+	struct uart_port *port = &pp->port;
 
 	altera_uart_interrupt(0, port);
 	mod_timer(&pp->tmr, jiffies + uart_poll_timeout(port));
@@ -314,7 +310,7 @@ static int altera_uart_startup(struct uart_port *port)
 	int ret;
 
 	if (!port->irq) {
-		setup_timer(&pp->tmr, altera_uart_timer, (unsigned long)port);
+		timer_setup(&pp->tmr, altera_uart_timer, 0);
 		mod_timer(&pp->tmr, jiffies + uart_poll_timeout(port));
 		return 0;
 	}
@@ -404,7 +400,7 @@ static void altera_uart_poll_put_char(struct uart_port *port, unsigned char c)
 /*
  *	Define the basic serial functions we support.
  */
-static struct uart_ops altera_uart_ops = {
+static const struct uart_ops altera_uart_ops = {
 	.tx_empty	= altera_uart_tx_empty,
 	.get_mctrl	= altera_uart_get_mctrl,
 	.set_mctrl	= altera_uart_set_mctrl,
@@ -489,11 +485,43 @@ console_initcall(altera_uart_console_init);
 
 #define	ALTERA_UART_CONSOLE	(&altera_uart_console)
 
+static void altera_uart_earlycon_write(struct console *co, const char *s,
+				       unsigned int count)
+{
+	struct earlycon_device *dev = co->data;
+
+	uart_console_write(&dev->port, s, count, altera_uart_console_putc);
+}
+
+static int __init altera_uart_earlycon_setup(struct earlycon_device *dev,
+					     const char *options)
+{
+	struct uart_port *port = &dev->port;
+
+	if (!port->membase)
+		return -ENODEV;
+
+	/* Enable RX interrupts now */
+	writel(ALTERA_UART_CONTROL_RRDY_MSK,
+	       port->membase + ALTERA_UART_CONTROL_REG);
+
+	if (dev->baud) {
+		unsigned int baudclk = port->uartclk / dev->baud;
+
+		writel(baudclk, port->membase + ALTERA_UART_DIVISOR_REG);
+	}
+
+	dev->con->write = altera_uart_earlycon_write;
+	return 0;
+}
+
+OF_EARLYCON_DECLARE(uart, "altr,uart-1.0", altera_uart_earlycon_setup);
+
 #else
 
 #define	ALTERA_UART_CONSOLE	NULL
 
-#endif /* CONFIG_ALTERA_UART_CONSOLE */
+#endif /* CONFIG_SERIAL_ALTERA_UART_CONSOLE */
 
 /*
  *	Define the altera_uart UART driver structure.
@@ -507,29 +535,6 @@ static struct uart_driver altera_uart_driver = {
 	.nr		= CONFIG_SERIAL_ALTERA_UART_MAXPORTS,
 	.cons		= ALTERA_UART_CONSOLE,
 };
-
-#ifdef CONFIG_OF
-static int altera_uart_get_of_uartclk(struct platform_device *pdev,
-				      struct uart_port *port)
-{
-	int len;
-	const __be32 *clk;
-
-	clk = of_get_property(pdev->dev.of_node, "clock-frequency", &len);
-	if (!clk || len < sizeof(__be32))
-		return -ENODEV;
-
-	port->uartclk = be32_to_cpup(clk);
-
-	return 0;
-}
-#else
-static int altera_uart_get_of_uartclk(struct platform_device *pdev,
-				      struct uart_port *port)
-{
-	return -ENODEV;
-}
-#endif /* CONFIG_OF */
 
 static int altera_uart_probe(struct platform_device *pdev)
 {
@@ -570,7 +575,8 @@ static int altera_uart_probe(struct platform_device *pdev)
 	if (platp)
 		port->uartclk = platp->uartclk;
 	else {
-		ret = altera_uart_get_of_uartclk(pdev, port);
+		ret = of_property_read_u32(pdev->dev.of_node, "clock-frequency",
+					   &port->uartclk);
 		if (ret)
 			return ret;
 	}
@@ -605,6 +611,7 @@ static int altera_uart_remove(struct platform_device *pdev)
 	if (port) {
 		uart_remove_one_port(&altera_uart_driver, port);
 		port->mapbase = 0;
+		iounmap(port->membase);
 	}
 
 	return 0;

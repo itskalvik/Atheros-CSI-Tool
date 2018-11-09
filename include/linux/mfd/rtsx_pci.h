@@ -334,6 +334,7 @@
 #define DCM_DRP_RD_DATA_H		0xFC29
 #define SD_VPCLK0_CTL			0xFC2A
 #define SD_VPCLK1_CTL			0xFC2B
+#define   PHASE_SELECT_MASK		0x1F
 #define SD_DCMPS0_CTL			0xFC2C
 #define SD_DCMPS1_CTL			0xFC2D
 #define SD_VPTX_CTL			SD_VPCLK0_CTL
@@ -573,6 +574,12 @@
 #define MSGTXDATA3			0xFE47
 #define MSGTXCTL			0xFE48
 #define LTR_CTL				0xFE4A
+#define LTR_TX_EN_MASK		BIT(7)
+#define LTR_TX_EN_1			BIT(7)
+#define LTR_TX_EN_0			0
+#define LTR_LATENCY_MODE_MASK		BIT(6)
+#define LTR_LATENCY_MODE_HW		0
+#define LTR_LATENCY_MODE_SW		BIT(6)
 #define OBFF_CFG			0xFE4C
 
 #define CDRESUMECTL			0xFE52
@@ -589,6 +596,7 @@
 #define   FORCE_ASPM_NO_ASPM		0x00
 #define PM_CLK_FORCE_CTL		0xFE58
 #define FUNC_FORCE_CTL			0xFE59
+#define   FUNC_FORCE_UPME_XMT_DBG	0x02
 #define PERST_GLITCH_WIDTH		0xFE5C
 #define CHANGE_LINK_STATE		0xFE5B
 #define RESET_LOAD_REG			0xFE5E
@@ -615,11 +623,15 @@
 #define L1SUB_CONFIG2			0xFE8E
 #define   L1SUB_AUTO_CFG		0x02
 #define L1SUB_CONFIG3			0xFE8F
+#define   L1OFF_MBIAS2_EN_5250		BIT(7)
 
 #define DUMMY_REG_RESET_0		0xFE90
 
 #define AUTOLOAD_CFG_BASE		0xFF00
 #define PETXCFG				0xFF03
+#define FORCE_CLKREQ_DELINK_MASK	BIT(7)
+#define FORCE_CLKREQ_LOW	0x80
+#define FORCE_CLKREQ_HIGH	0x00
 
 #define PM_CTRL1			0xFF44
 #define   CD_RESUME_EN_MASK		0xF0
@@ -712,6 +724,7 @@
 #define PHY_RCR1			0x02
 #define   PHY_RCR1_ADP_TIME_4		0x0400
 #define   PHY_RCR1_VCO_COARSE		0x001F
+#define   PHY_RCR1_INIT_27S		0x0A1F
 #define PHY_SSCCR2			0x02
 #define   PHY_SSCCR2_PLL_NCODE		0x0A00
 #define   PHY_SSCCR2_TIME0		0x001C
@@ -724,6 +737,7 @@
 #define   PHY_RCR2_FREQSEL_12		0x0040
 #define   PHY_RCR2_CDR_SC_12P		0x0010
 #define   PHY_RCR2_CALIB_LATE		0x0002
+#define   PHY_RCR2_INIT_27S		0xC152
 #define PHY_SSCCR3			0x03
 #define   PHY_SSCCR3_STEP_IN		0x2740
 #define   PHY_SSCCR3_CHECK_DELAY	0x0008
@@ -800,12 +814,14 @@
 #define   PHY_ANA1A_RXT_BIST		0x0500
 #define   PHY_ANA1A_TXR_BIST		0x0040
 #define   PHY_ANA1A_REV			0x0006
+#define   PHY_FLD0_INIT_27S		0x2546
 #define PHY_FLD1			0x1B
 #define PHY_FLD2			0x1C
 #define PHY_FLD3			0x1D
 #define   PHY_FLD3_TIMER_4		0x0800
 #define   PHY_FLD3_TIMER_6		0x0020
 #define   PHY_FLD3_RXDELINK		0x0004
+#define   PHY_FLD3_INIT_27S		0x0004
 #define PHY_ANA1D			0x1D
 #define   PHY_ANA1D_DEBUG_ADDR		0x0004
 #define _PHY_FLD0			0x1D
@@ -824,6 +840,7 @@
 #define   PHY_FLD4_BER_COUNT		0x00E0
 #define   PHY_FLD4_BER_TIMER		0x000A
 #define   PHY_FLD4_BER_CHK_EN		0x0001
+#define   PHY_FLD4_INIT_27S		0x5C7F
 #define PHY_DIG1E			0x1E
 #define   PHY_DIG1E_REV			0x4000
 #define   PHY_DIG1E_D0_X_D1		0x1000
@@ -838,11 +855,17 @@
 #define   PHY_DIG1E_RX_EN_KEEP		0x0001
 #define PHY_DUM_REG			0x1F
 
+#define PCR_ASPM_SETTING_REG1		0x160
+#define PCR_ASPM_SETTING_REG2		0x168
+
 #define PCR_SETTING_REG1		0x724
 #define PCR_SETTING_REG2		0x814
 #define PCR_SETTING_REG3		0x747
 
 #define rtsx_pci_init_cmd(pcr)		((pcr)->ci = 0)
+
+#define RTS5227_DEVICE_ID		0x5227
+#define RTS_MAX_TIMES_FREQ_REDUCTION	8
 
 struct rtsx_pcr;
 
@@ -867,14 +890,79 @@ struct pcr_ops {
 	int		(*conv_clk_and_div_n)(int clk, int dir);
 	void		(*fetch_vendor_settings)(struct rtsx_pcr *pcr);
 	void		(*force_power_down)(struct rtsx_pcr *pcr, u8 pm_state);
+
+	void (*set_aspm)(struct rtsx_pcr *pcr, bool enable);
+	int (*set_ltr_latency)(struct rtsx_pcr *pcr, u32 latency);
+	int (*set_l1off_sub)(struct rtsx_pcr *pcr, u8 val);
+	void (*set_l1off_cfg_sub_d0)(struct rtsx_pcr *pcr, int active);
+	void (*full_on)(struct rtsx_pcr *pcr);
+	void (*power_saving)(struct rtsx_pcr *pcr);
 };
 
 enum PDEV_STAT  {PDEV_STAT_IDLE, PDEV_STAT_RUN};
+
+#define ASPM_L1_1_EN_MASK		BIT(3)
+#define ASPM_L1_2_EN_MASK		BIT(2)
+#define PM_L1_1_EN_MASK		BIT(1)
+#define PM_L1_2_EN_MASK		BIT(0)
+
+#define ASPM_L1_1_EN			BIT(0)
+#define ASPM_L1_2_EN			BIT(1)
+#define PM_L1_1_EN				BIT(2)
+#define PM_L1_2_EN				BIT(3)
+#define LTR_L1SS_PWR_GATE_EN	BIT(4)
+#define L1_SNOOZE_TEST_EN		BIT(5)
+#define LTR_L1SS_PWR_GATE_CHECK_CARD_EN	BIT(6)
+
+enum dev_aspm_mode {
+	DEV_ASPM_DYNAMIC,
+	DEV_ASPM_BACKDOOR,
+	DEV_ASPM_STATIC,
+	DEV_ASPM_DISABLE,
+};
+
+/*
+ * struct rtsx_cr_option  - card reader option
+ * @dev_flags: device flags
+ * @force_clkreq_0: force clock request
+ * @ltr_en: enable ltr mode flag
+ * @ltr_enabled: ltr mode in configure space flag
+ * @ltr_active: ltr mode status
+ * @ltr_active_latency: ltr mode active latency
+ * @ltr_idle_latency: ltr mode idle latency
+ * @ltr_l1off_latency: ltr mode l1off latency
+ * @dev_aspm_mode: device aspm mode
+ * @l1_snooze_delay: l1 snooze delay
+ * @ltr_l1off_sspwrgate: ltr l1off sspwrgate
+ * @ltr_l1off_snooze_sspwrgate: ltr l1off snooze sspwrgate
+ */
+struct rtsx_cr_option {
+	u32 dev_flags;
+	bool force_clkreq_0;
+	bool ltr_en;
+	bool ltr_enabled;
+	bool ltr_active;
+	u32 ltr_active_latency;
+	u32 ltr_idle_latency;
+	u32 ltr_l1off_latency;
+	enum dev_aspm_mode dev_aspm_mode;
+	u32 l1_snooze_delay;
+	u8 ltr_l1off_sspwrgate;
+	u8 ltr_l1off_snooze_sspwrgate;
+};
+
+#define rtsx_set_dev_flag(cr, flag) \
+	((cr)->option.dev_flags |= (flag))
+#define rtsx_clear_dev_flag(cr, flag) \
+	((cr)->option.dev_flags &= ~(flag))
+#define rtsx_check_dev_flag(cr, flag) \
+	((cr)->option.dev_flags & (flag))
 
 struct rtsx_pcr {
 	struct pci_dev			*pci;
 	unsigned int			id;
 	int				pcie_cap;
+	struct rtsx_cr_option	option;
 
 	/* pci resources */
 	unsigned long			addr;
@@ -931,6 +1019,7 @@ struct rtsx_pcr {
 	u8				card_drive_sel;
 #define ASPM_L1_EN			0x02
 	u8				aspm_en;
+	bool				aspm_enabled;
 
 #define PCR_MS_PMOS			(1 << 0)
 #define PCR_REVERSE_SOCKET		(1 << 1)
@@ -951,7 +1040,14 @@ struct rtsx_pcr {
 
 	int				num_slots;
 	struct rtsx_slot		*slots;
+
+	u8				dma_error_count;
 };
+
+#define PID_524A	0x524A
+#define PID_5249		0x5249
+#define PID_5250		0x5250
+#define PID_525A	0x525A
 
 #define CHK_PCI_PID(pcr, pid)		((pcr)->pci->device == (pid))
 #define PCI_VID(pcr)			((pcr)->pci->vendor)

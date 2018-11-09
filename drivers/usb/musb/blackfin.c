@@ -1,11 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * MUSB OTG controller driver for Blackfin Processors
  *
  * Copyright 2006-2008 Analog Devices Inc.
  *
  * Enter bugs at http://blackfin.uclinux.org/
- *
- * Licensed under the GPL-2 or later.
  */
 
 #include <linux/module.h>
@@ -223,7 +222,7 @@ static irqreturn_t blackfin_interrupt(int irq, void *__hci)
 	if ((musb->xceiv->otg->state == OTG_STATE_B_IDLE
 		|| musb->xceiv->otg->state == OTG_STATE_A_WAIT_BCON) ||
 		(musb->int_usb & MUSB_INTR_DISCONNECT && is_host_active(musb))) {
-		mod_timer(&musb_conn_timer, jiffies + TIMER_DELAY);
+		mod_timer(&musb->dev_timer, jiffies + TIMER_DELAY);
 		musb->a_wait_bcon = TIMER_DELAY;
 	}
 
@@ -232,9 +231,9 @@ static irqreturn_t blackfin_interrupt(int irq, void *__hci)
 	return retval;
 }
 
-static void musb_conn_timer_handler(unsigned long _musb)
+static void musb_conn_timer_handler(struct timer_list *t)
 {
-	struct musb *musb = (void *)_musb;
+	struct musb *musb = from_timer(musb, t, dev_timer);
 	unsigned long flags;
 	u16 val;
 	static u8 toggle;
@@ -266,7 +265,7 @@ static void musb_conn_timer_handler(unsigned long _musb)
 			musb_writeb(musb->mregs, MUSB_INTRUSB, val);
 			musb->xceiv->otg->state = OTG_STATE_B_IDLE;
 		}
-		mod_timer(&musb_conn_timer, jiffies + TIMER_DELAY);
+		mod_timer(&musb->dev_timer, jiffies + TIMER_DELAY);
 		break;
 	case OTG_STATE_B_IDLE:
 		/*
@@ -310,7 +309,7 @@ static void musb_conn_timer_handler(unsigned long _musb)
 			 * shortening it, if accelerating A-plug detection
 			 * is needed in OTG mode.
 			 */
-			mod_timer(&musb_conn_timer, jiffies + TIMER_DELAY / 4);
+			mod_timer(&musb->dev_timer, jiffies + TIMER_DELAY / 4);
 		}
 		break;
 	default:
@@ -445,8 +444,7 @@ static int bfin_musb_init(struct musb *musb)
 
 	bfin_musb_reg_init(musb);
 
-	setup_timer(&musb_conn_timer, musb_conn_timer_handler,
-			(unsigned long) musb);
+	timer_setup(&musb->dev_timer, musb_conn_timer_handler, 0);
 
 	musb->xceiv->set_power = bfin_musb_set_power;
 
@@ -465,9 +463,11 @@ static int bfin_musb_exit(struct musb *musb)
 }
 
 static const struct musb_platform_ops bfin_ops = {
+	.quirks		= MUSB_DMA_INVENTRA,
 	.init		= bfin_musb_init,
 	.exit		= bfin_musb_exit,
 
+	.fifo_offset	= bfin_fifo_offset,
 	.readb		= bfin_readb,
 	.writeb		= bfin_writeb,
 	.readw		= bfin_readw,
@@ -477,6 +477,10 @@ static const struct musb_platform_ops bfin_ops = {
 	.fifo_mode	= 2,
 	.read_fifo	= bfin_read_fifo,
 	.write_fifo	= bfin_write_fifo,
+#ifdef CONFIG_USB_INVENTRA_DMA
+	.dma_init	= musbhs_dma_controller_create,
+	.dma_exit	= musbhs_dma_controller_destroy,
+#endif
 	.enable		= bfin_musb_enable,
 	.disable	= bfin_musb_disable,
 
@@ -575,8 +579,7 @@ static int bfin_remove(struct platform_device *pdev)
 	return 0;
 }
 
-#ifdef CONFIG_PM
-static int bfin_suspend(struct device *dev)
+static int __maybe_unused bfin_suspend(struct device *dev)
 {
 	struct bfin_glue	*glue = dev_get_drvdata(dev);
 	struct musb		*musb = glue_to_musb(glue);
@@ -593,7 +596,7 @@ static int bfin_suspend(struct device *dev)
 	return 0;
 }
 
-static int bfin_resume(struct device *dev)
+static int __maybe_unused bfin_resume(struct device *dev)
 {
 	struct bfin_glue	*glue = dev_get_drvdata(dev);
 	struct musb		*musb = glue_to_musb(glue);
@@ -602,7 +605,6 @@ static int bfin_resume(struct device *dev)
 
 	return 0;
 }
-#endif
 
 static SIMPLE_DEV_PM_OPS(bfin_pm_ops, bfin_suspend, bfin_resume);
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #include <linux/init.h>
 
 #include <asm/x86_init.h>
@@ -7,6 +8,7 @@
 #include <xen/xen.h>
 #include <xen/interface/physdev.h>
 #include "xen-ops.h"
+#include "pmu.h"
 #include "smp.h"
 
 static unsigned int xen_io_apic_read(unsigned apic, unsigned reg)
@@ -29,7 +31,7 @@ static unsigned int xen_io_apic_read(unsigned apic, unsigned reg)
 	return 0xfd;
 }
 
-static unsigned long xen_set_apic_id(unsigned int x)
+static u32 xen_set_apic_id(unsigned int x)
 {
 	WARN_ON(1);
 	return x;
@@ -55,7 +57,7 @@ static u32 xen_apic_read(u32 reg)
 		return 0;
 
 	if (reg == APIC_LVR)
-		return 0x10;
+		return 0x14;
 #ifdef CONFIG_X86_32
 	if (reg == APIC_LDR)
 		return SET_APIC_LOGICAL_ID(1UL << smp_processor_id());
@@ -63,15 +65,20 @@ static u32 xen_apic_read(u32 reg)
 	if (reg != APIC_ID)
 		return 0;
 
-	ret = HYPERVISOR_dom0_op(&op);
+	ret = HYPERVISOR_platform_op(&op);
 	if (ret)
-		return 0;
+		op.u.pcpu_info.apic_id = BAD_APICID;
 
 	return op.u.pcpu_info.apic_id << 24;
 }
 
 static void xen_apic_write(u32 reg, u32 val)
 {
+	if (reg == APIC_LVTPC) {
+		(void)pmu_apic_update(reg);
+		return;
+	}
+
 	/* Warn to see if there's any stray references */
 	WARN(1,"register: %x, value: %x\n", reg, val);
 }
@@ -136,6 +143,14 @@ static void xen_silent_inquire(int apicid)
 {
 }
 
+static int xen_cpu_present_to_apicid(int cpu)
+{
+	if (cpu_present(cpu))
+		return cpu_data(cpu).apicid;
+	else
+		return BAD_APICID;
+}
+
 static struct apic xen_pv_apic = {
 	.name 				= "Xen PV",
 	.probe 				= xen_apic_probe_pv,
@@ -146,26 +161,23 @@ static struct apic xen_pv_apic = {
 	/* .irq_delivery_mode - used in native_compose_msi_msg only */
 	/* .irq_dest_mode     - used in native_compose_msi_msg only */
 
-	.target_cpus			= default_target_cpus,
 	.disable_esr			= 0,
 	/* .dest_logical      -  default_send_IPI_ use it but we use our own. */
 	.check_apicid_used		= default_check_apicid_used, /* Used on 32-bit */
 
-	.vector_allocation_domain	= flat_vector_allocation_domain,
 	.init_apic_ldr			= xen_noop, /* setup_local_APIC calls it */
 
 	.ioapic_phys_id_map		= default_ioapic_phys_id_map, /* Used on 32-bit */
 	.setup_apic_routing		= NULL,
-	.cpu_present_to_apicid		= default_cpu_present_to_apicid,
+	.cpu_present_to_apicid		= xen_cpu_present_to_apicid,
 	.apicid_to_cpu_present		= physid_set_mask_of_physid, /* Used on 32-bit */
 	.check_phys_apicid_present	= default_check_phys_apicid_present, /* smp_sanity_check needs it */
 	.phys_pkg_id			= xen_phys_pkg_id, /* detect_ht */
 
 	.get_apic_id 			= xen_get_apic_id,
 	.set_apic_id 			= xen_set_apic_id, /* Can be NULL on 32-bit. */
-	.apic_id_mask			= 0xFF << 24, /* Used by verify_local_APIC. Match with what xen_get_apic_id does. */
 
-	.cpu_mask_to_apicid_and		= flat_cpu_mask_to_apicid_and,
+	.calc_dest_apicid		= apic_flat_calc_apicid,
 
 #ifdef CONFIG_SMP
 	.send_IPI_mask 			= xen_send_IPI_mask,

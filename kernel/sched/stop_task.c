@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #include "sched.h"
 
 /*
@@ -24,7 +25,7 @@ check_preempt_curr_stop(struct rq *rq, struct task_struct *p, int flags)
 }
 
 static struct task_struct *
-pick_next_task_stop(struct rq *rq, struct task_struct *prev)
+pick_next_task_stop(struct rq *rq, struct task_struct *prev, struct rq_flags *rf)
 {
 	struct task_struct *stop = rq->stop;
 
@@ -71,7 +72,7 @@ static void put_prev_task_stop(struct rq *rq, struct task_struct *prev)
 	account_group_exec_runtime(curr, delta_exec);
 
 	curr->se.exec_start = rq_clock_task(rq);
-	cpuacct_charge(curr, delta_exec);
+	cgroup_account_cputime(curr, delta_exec);
 }
 
 static void task_tick_stop(struct rq *rq, struct task_struct *curr, int queued)
@@ -123,6 +124,7 @@ const struct sched_class stop_sched_class = {
 
 #ifdef CONFIG_SMP
 	.select_task_rq		= select_task_rq_stop,
+	.set_cpus_allowed	= set_cpus_allowed_common,
 #endif
 
 	.set_curr_task          = set_curr_task_stop,

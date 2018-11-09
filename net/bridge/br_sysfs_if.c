@@ -17,6 +17,7 @@
 #include <linux/if_bridge.h>
 #include <linux/rtnetlink.h>
 #include <linux/spinlock.h>
+#include <linux/sched/signal.h>
 
 #include "br_private.h"
 
@@ -61,7 +62,6 @@ static int store_flag(struct net_bridge_port *p, unsigned long v,
 	if (flags != p->flags) {
 		p->flags = flags;
 		br_port_flags_change(p, mask);
-		br_ifinfo_notify(RTM_NEWLINK, p);
 	}
 	return 0;
 }
@@ -160,10 +160,27 @@ static BRPORT_ATTR(hold_timer, S_IRUGO, show_hold_timer, NULL);
 
 static int store_flush(struct net_bridge_port *p, unsigned long v)
 {
-	br_fdb_delete_by_port(p->br, p, 0); // Don't delete local entry
+	br_fdb_delete_by_port(p->br, p, 0, 0); // Don't delete local entry
 	return 0;
 }
 static BRPORT_ATTR(flush, S_IWUSR, NULL, store_flush);
+
+static ssize_t show_group_fwd_mask(struct net_bridge_port *p, char *buf)
+{
+	return sprintf(buf, "%#x\n", p->group_fwd_mask);
+}
+
+static int store_group_fwd_mask(struct net_bridge_port *p,
+				unsigned long v)
+{
+	if (v & BR_GROUPFWD_MACPAUSE)
+		return -EINVAL;
+	p->group_fwd_mask = v;
+
+	return 0;
+}
+static BRPORT_ATTR(group_fwd_mask, S_IRUGO | S_IWUSR, show_group_fwd_mask,
+		   store_group_fwd_mask);
 
 BRPORT_ATTR_FLAG(hairpin_mode, BR_HAIRPIN_MODE);
 BRPORT_ATTR_FLAG(bpdu_guard, BR_BPDU_GUARD);
@@ -172,6 +189,9 @@ BRPORT_ATTR_FLAG(learning, BR_LEARNING);
 BRPORT_ATTR_FLAG(unicast_flood, BR_FLOOD);
 BRPORT_ATTR_FLAG(proxyarp, BR_PROXYARP);
 BRPORT_ATTR_FLAG(proxyarp_wifi, BR_PROXYARP_WIFI);
+BRPORT_ATTR_FLAG(multicast_flood, BR_MCAST_FLOOD);
+BRPORT_ATTR_FLAG(broadcast_flood, BR_BCAST_FLOOD);
+BRPORT_ATTR_FLAG(neigh_suppress, BR_NEIGH_SUPPRESS);
 
 #ifdef CONFIG_BRIDGE_IGMP_SNOOPING
 static ssize_t show_multicast_router(struct net_bridge_port *p, char *buf)
@@ -188,6 +208,7 @@ static BRPORT_ATTR(multicast_router, S_IRUGO | S_IWUSR, show_multicast_router,
 		   store_multicast_router);
 
 BRPORT_ATTR_FLAG(multicast_fast_leave, BR_MULTICAST_FAST_LEAVE);
+BRPORT_ATTR_FLAG(multicast_to_unicast, BR_MULTICAST_TO_UNICAST);
 #endif
 
 static const struct brport_attribute *brport_attrs[] = {
@@ -214,9 +235,14 @@ static const struct brport_attribute *brport_attrs[] = {
 #ifdef CONFIG_BRIDGE_IGMP_SNOOPING
 	&brport_attr_multicast_router,
 	&brport_attr_multicast_fast_leave,
+	&brport_attr_multicast_to_unicast,
 #endif
 	&brport_attr_proxyarp,
 	&brport_attr_proxyarp_wifi,
+	&brport_attr_multicast_flood,
+	&brport_attr_broadcast_flood,
+	&brport_attr_group_fwd_mask,
+	&brport_attr_neigh_suppress,
 	NULL
 };
 
@@ -253,8 +279,10 @@ static ssize_t brport_store(struct kobject *kobj,
 			spin_lock_bh(&p->br->lock);
 			ret = brport_attr->store(p, val);
 			spin_unlock_bh(&p->br->lock);
-			if (ret == 0)
+			if (!ret) {
+				br_ifinfo_notify(RTM_NEWLINK, NULL, p);
 				ret = count;
+			}
 		}
 		rtnl_unlock();
 	}

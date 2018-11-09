@@ -1085,8 +1085,6 @@ static void s2io_txpic_intr_handle(struct s2io_nic *sp);
 static void tx_intr_handler(struct fifo_info *fifo_data);
 static void s2io_handle_errors(void * dev_id);
 
-static int s2io_starter(void);
-static void s2io_closer(void);
 static void s2io_tx_watchdog(struct net_device *dev);
 static void s2io_set_multicast(struct net_device *dev);
 static int rx_osm_handler(struct ring_info *ring_data, struct RxD_t * rxdp);
@@ -1096,7 +1094,7 @@ static int s2io_poll_msix(struct napi_struct *napi, int budget);
 static int s2io_poll_inta(struct napi_struct *napi, int budget);
 static void s2io_init_pci(struct s2io_nic * sp);
 static int do_s2io_prog_unicast(struct net_device *dev, u8 *addr);
-static void s2io_alarm_handle(unsigned long data);
+static void s2io_alarm_handle(struct timer_list *t);
 static irqreturn_t
 s2io_msix_ring_handle(int irq, void *dev_id);
 static irqreturn_t

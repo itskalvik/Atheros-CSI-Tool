@@ -1,14 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * at91_udc -- driver for at91-series USB peripheral controller
  *
  * Copyright (C) 2004 by Thomas Rathbone
  * Copyright (C) 2005 by HP Labs
  * Copyright (C) 2005 by David Brownell
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
  */
 
 #undef	VERBOSE_DEBUG
@@ -59,15 +55,34 @@
 #define	DRIVER_VERSION	"3 May 2006"
 
 static const char driver_name [] = "at91_udc";
-static const char * const ep_names[] = {
-	"ep0",
-	"ep1",
-	"ep2",
-	"ep3-int",
-	"ep4",
-	"ep5",
+
+static const struct {
+	const char *name;
+	const struct usb_ep_caps caps;
+} ep_info[] = {
+#define EP_INFO(_name, _caps) \
+	{ \
+		.name = _name, \
+		.caps = _caps, \
+	}
+
+	EP_INFO("ep0",
+		USB_EP_CAPS(USB_EP_CAPS_TYPE_CONTROL, USB_EP_CAPS_DIR_ALL)),
+	EP_INFO("ep1",
+		USB_EP_CAPS(USB_EP_CAPS_TYPE_ALL, USB_EP_CAPS_DIR_ALL)),
+	EP_INFO("ep2",
+		USB_EP_CAPS(USB_EP_CAPS_TYPE_ALL, USB_EP_CAPS_DIR_ALL)),
+	EP_INFO("ep3-int",
+		USB_EP_CAPS(USB_EP_CAPS_TYPE_INT, USB_EP_CAPS_DIR_ALL)),
+	EP_INFO("ep4",
+		USB_EP_CAPS(USB_EP_CAPS_TYPE_ALL, USB_EP_CAPS_DIR_ALL)),
+	EP_INFO("ep5",
+		USB_EP_CAPS(USB_EP_CAPS_TYPE_ALL, USB_EP_CAPS_DIR_ALL)),
+
+#undef EP_INFO
 };
-#define ep0name		ep_names[0]
+
+#define ep0name		ep_info[0].name
 
 #define VBUS_POLL_TIMEOUT	msecs_to_jiffies(1000)
 
@@ -825,6 +840,7 @@ static void udc_reinit(struct at91_udc *udc)
 
 	INIT_LIST_HEAD(&udc->gadget.ep_list);
 	INIT_LIST_HEAD(&udc->gadget.ep0->ep_list);
+	udc->gadget.quirk_stall_not_supp = 1;
 
 	for (i = 0; i < NUM_ENDPOINTS; i++) {
 		struct at91_ep *ep = &udc->ep[i];
@@ -1534,9 +1550,9 @@ static void at91_vbus_timer_work(struct work_struct *work)
 		mod_timer(&udc->vbus_timer, jiffies + VBUS_POLL_TIMEOUT);
 }
 
-static void at91_vbus_timer(unsigned long data)
+static void at91_vbus_timer(struct timer_list *t)
 {
-	struct at91_udc *udc = (struct at91_udc *)data;
+	struct at91_udc *udc = from_timer(udc, t, vbus_timer);
 
 	/*
 	 * If we are polling vbus it is likely that the gpio is on an
@@ -1706,10 +1722,7 @@ static int at91sam9261_udc_init(struct at91_udc *udc)
 
 	udc->matrix = syscon_regmap_lookup_by_phandle(udc->pdev->dev.of_node,
 						      "atmel,matrix");
-	if (IS_ERR(udc->matrix))
-		return PTR_ERR(udc->matrix);
-
-	return 0;
+	return PTR_ERR_OR_ZERO(udc->matrix);
 }
 
 static void at91sam9261_udc_pullup(struct at91_udc *udc, int is_on)
@@ -1830,7 +1843,8 @@ static int at91udc_probe(struct platform_device *pdev)
 
 	for (i = 0; i < NUM_ENDPOINTS; i++) {
 		ep = &udc->ep[i];
-		ep->ep.name = ep_names[i];
+		ep->ep.name = ep_info[i].name;
+		ep->ep.caps = ep_info[i].caps;
 		ep->ep.ops = &at91_ep_ops;
 		ep->udc = udc;
 		ep->int_mask = BIT(i);
@@ -1904,8 +1918,7 @@ static int at91udc_probe(struct platform_device *pdev)
 
 		if (udc->board.vbus_polled) {
 			INIT_WORK(&udc->vbus_timer_work, at91_vbus_timer_work);
-			setup_timer(&udc->vbus_timer, at91_vbus_timer,
-				    (unsigned long)udc);
+			timer_setup(&udc->vbus_timer, at91_vbus_timer, 0);
 			mod_timer(&udc->vbus_timer,
 				  jiffies + VBUS_POLL_TIMEOUT);
 		} else {

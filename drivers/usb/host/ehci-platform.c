@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Generic platform ehci driver
  *
@@ -16,9 +17,8 @@
  * Copyright 2000-2002 David Brownell
  * Copyright 1999 Linus Torvalds
  * Copyright 1999 Gregory P. Smith
- *
- * Licensed under the GNU/GPL. See COPYING for details.
  */
+#include <linux/acpi.h>
 #include <linux/clk.h>
 #include <linux/dma-mapping.h>
 #include <linux/err.h>
@@ -33,18 +33,20 @@
 #include <linux/usb.h>
 #include <linux/usb/hcd.h>
 #include <linux/usb/ehci_pdriver.h>
+#include <linux/usb/of.h>
 
 #include "ehci.h"
 
 #define DRIVER_DESC "EHCI generic platform driver"
-#define EHCI_MAX_CLKS 3
+#define EHCI_MAX_CLKS 4
 #define hcd_to_ehci_priv(h) ((struct ehci_platform_priv *)hcd_to_ehci(h)->priv)
 
 struct ehci_platform_priv {
 	struct clk *clks[EHCI_MAX_CLKS];
-	struct reset_control *rst;
+	struct reset_control *rsts;
 	struct phy **phys;
 	int num_phys;
+	bool reset_on_resume;
 };
 
 static const char hcd_name[] = "ehci-platform";
@@ -56,7 +58,6 @@ static int ehci_platform_reset(struct usb_hcd *hcd)
 	struct ehci_hcd *ehci = hcd_to_ehci(hcd);
 	int retval;
 
-	hcd->has_tt = pdata->has_tt;
 	ehci->has_synopsys_hc_bug = pdata->has_synopsys_hc_bug;
 
 	if (pdata->pre_setup) {
@@ -88,15 +89,13 @@ static int ehci_platform_power_on(struct platform_device *dev)
 	}
 
 	for (phy_num = 0; phy_num < priv->num_phys; phy_num++) {
-		if (priv->phys[phy_num]) {
-			ret = phy_init(priv->phys[phy_num]);
-			if (ret)
-				goto err_exit_phy;
-			ret = phy_power_on(priv->phys[phy_num]);
-			if (ret) {
-				phy_exit(priv->phys[phy_num]);
-				goto err_exit_phy;
-			}
+		ret = phy_init(priv->phys[phy_num]);
+		if (ret)
+			goto err_exit_phy;
+		ret = phy_power_on(priv->phys[phy_num]);
+		if (ret) {
+			phy_exit(priv->phys[phy_num]);
+			goto err_exit_phy;
 		}
 	}
 
@@ -104,10 +103,8 @@ static int ehci_platform_power_on(struct platform_device *dev)
 
 err_exit_phy:
 	while (--phy_num >= 0) {
-		if (priv->phys[phy_num]) {
-			phy_power_off(priv->phys[phy_num]);
-			phy_exit(priv->phys[phy_num]);
-		}
+		phy_power_off(priv->phys[phy_num]);
+		phy_exit(priv->phys[phy_num]);
 	}
 err_disable_clks:
 	while (--clk >= 0)
@@ -123,10 +120,8 @@ static void ehci_platform_power_off(struct platform_device *dev)
 	int clk, phy_num;
 
 	for (phy_num = 0; phy_num < priv->num_phys; phy_num++) {
-		if (priv->phys[phy_num]) {
-			phy_power_off(priv->phys[phy_num]);
-			phy_exit(priv->phys[phy_num]);
-		}
+		phy_power_off(priv->phys[phy_num]);
+		phy_exit(priv->phys[phy_num]);
 	}
 
 	for (clk = EHCI_MAX_CLKS - 1; clk >= 0; clk--)
@@ -154,7 +149,6 @@ static int ehci_platform_probe(struct platform_device *dev)
 	struct usb_ehci_pdata *pdata = dev_get_platdata(&dev->dev);
 	struct ehci_platform_priv *priv;
 	struct ehci_hcd *ehci;
-	const char *phy_name;
 	int err, irq, phy_num, clk = 0;
 
 	if (usb_disabled())
@@ -169,8 +163,10 @@ static int ehci_platform_probe(struct platform_device *dev)
 
 	err = dma_coerce_mask_and_coherent(&dev->dev,
 		pdata->dma_mask_64 ? DMA_BIT_MASK(64) : DMA_BIT_MASK(32));
-	if (err)
+	if (err) {
+		dev_err(&dev->dev, "Error: DMA mask configuration failed\n");
 		return err;
+	}
 
 	irq = platform_get_irq(dev, 0);
 	if (irq < 0) {
@@ -200,40 +196,33 @@ static int ehci_platform_probe(struct platform_device *dev)
 
 		if (of_property_read_bool(dev->dev.of_node,
 					  "needs-reset-on-resume"))
-			pdata->reset_on_resume = 1;
+			priv->reset_on_resume = true;
+
+		if (of_property_read_bool(dev->dev.of_node,
+					  "has-transaction-translator"))
+			hcd->has_tt = 1;
 
 		priv->num_phys = of_count_phandle_with_args(dev->dev.of_node,
 				"phys", "#phy-cells");
-		priv->num_phys = priv->num_phys > 0 ? priv->num_phys : 1;
 
-		priv->phys = devm_kcalloc(&dev->dev, priv->num_phys,
-				sizeof(struct phy *), GFP_KERNEL);
-		if (!priv->phys)
-			return -ENOMEM;
+		if (priv->num_phys > 0) {
+			priv->phys = devm_kcalloc(&dev->dev, priv->num_phys,
+					    sizeof(struct phy *), GFP_KERNEL);
+			if (!priv->phys)
+				return -ENOMEM;
+		} else
+			priv->num_phys = 0;
 
 		for (phy_num = 0; phy_num < priv->num_phys; phy_num++) {
-				err = of_property_read_string_index(
-						dev->dev.of_node,
-						"phy-names", phy_num,
-						&phy_name);
-
-				if (err < 0) {
-					if (priv->num_phys > 1) {
-						dev_err(&dev->dev, "phy-names not provided");
-						goto err_put_hcd;
-					} else
-						phy_name = "usb";
-				}
-
-				priv->phys[phy_num] = devm_phy_get(&dev->dev,
-						phy_name);
-				if (IS_ERR(priv->phys[phy_num])) {
-					err = PTR_ERR(priv->phys[phy_num]);
-					if ((priv->num_phys > 1) ||
-					    (err == -EPROBE_DEFER))
-						goto err_put_hcd;
-					priv->phys[phy_num] = NULL;
-				}
+			priv->phys[phy_num] = devm_of_phy_get_by_index(
+					&dev->dev, dev->dev.of_node, phy_num);
+			if (IS_ERR(priv->phys[phy_num])) {
+				err = PTR_ERR(priv->phys[phy_num]);
+					goto err_put_hcd;
+			} else if (!hcd->phy) {
+				/* Avoiding phy_get() in usb_add_hcd() */
+				hcd->phy = priv->phys[phy_num];
+			}
 		}
 
 		for (clk = 0; clk < EHCI_MAX_CLKS; clk++) {
@@ -248,22 +237,24 @@ static int ehci_platform_probe(struct platform_device *dev)
 		}
 	}
 
-	priv->rst = devm_reset_control_get_optional(&dev->dev, NULL);
-	if (IS_ERR(priv->rst)) {
-		err = PTR_ERR(priv->rst);
-		if (err == -EPROBE_DEFER)
-			goto err_put_clks;
-		priv->rst = NULL;
-	} else {
-		err = reset_control_deassert(priv->rst);
-		if (err)
-			goto err_put_clks;
+	priv->rsts = devm_reset_control_array_get_optional_shared(&dev->dev);
+	if (IS_ERR(priv->rsts)) {
+		err = PTR_ERR(priv->rsts);
+		goto err_put_clks;
 	}
+
+	err = reset_control_deassert(priv->rsts);
+	if (err)
+		goto err_put_clks;
 
 	if (pdata->big_endian_desc)
 		ehci->big_endian_desc = 1;
 	if (pdata->big_endian_mmio)
 		ehci->big_endian_mmio = 1;
+	if (pdata->has_tt)
+		hcd->has_tt = 1;
+	if (pdata->reset_on_resume)
+		priv->reset_on_resume = true;
 
 #ifndef CONFIG_USB_EHCI_BIG_ENDIAN_MMIO
 	if (ehci->big_endian_mmio) {
@@ -302,6 +293,7 @@ static int ehci_platform_probe(struct platform_device *dev)
 		goto err_power;
 
 	device_wakeup_enable(hcd->self.controller);
+	device_enable_async_suspend(hcd->self.controller);
 	platform_set_drvdata(dev, hcd);
 
 	return err;
@@ -310,8 +302,7 @@ err_power:
 	if (pdata->power_off)
 		pdata->power_off(dev);
 err_reset:
-	if (priv->rst)
-		reset_control_assert(priv->rst);
+	reset_control_assert(priv->rsts);
 err_put_clks:
 	while (--clk >= 0)
 		clk_put(priv->clks[clk]);
@@ -336,8 +327,7 @@ static int ehci_platform_remove(struct platform_device *dev)
 	if (pdata->power_off)
 		pdata->power_off(dev);
 
-	if (priv->rst)
-		reset_control_assert(priv->rst);
+	reset_control_assert(priv->rsts);
 
 	for (clk = 0; clk < EHCI_MAX_CLKS && priv->clks[clk]; clk++)
 		clk_put(priv->clks[clk]);
@@ -355,8 +345,7 @@ static int ehci_platform_suspend(struct device *dev)
 {
 	struct usb_hcd *hcd = dev_get_drvdata(dev);
 	struct usb_ehci_pdata *pdata = dev_get_platdata(dev);
-	struct platform_device *pdev =
-		container_of(dev, struct platform_device, dev);
+	struct platform_device *pdev = to_platform_device(dev);
 	bool do_wakeup = device_may_wakeup(dev);
 	int ret;
 
@@ -374,8 +363,9 @@ static int ehci_platform_resume(struct device *dev)
 {
 	struct usb_hcd *hcd = dev_get_drvdata(dev);
 	struct usb_ehci_pdata *pdata = dev_get_platdata(dev);
-	struct platform_device *pdev =
-		container_of(dev, struct platform_device, dev);
+	struct platform_device *pdev = to_platform_device(dev);
+	struct ehci_platform_priv *priv = hcd_to_ehci_priv(hcd);
+	struct device *companion_dev;
 
 	if (pdata->power_on) {
 		int err = pdata->power_on(pdev);
@@ -383,7 +373,13 @@ static int ehci_platform_resume(struct device *dev)
 			return err;
 	}
 
-	ehci_resume(hcd, pdata->reset_on_resume);
+	companion_dev = usb_of_get_companion_dev(hcd->self.controller);
+	if (companion_dev) {
+		device_pm_wait_for_dev(hcd->self.controller, companion_dev);
+		put_device(companion_dev);
+	}
+
+	ehci_resume(hcd, priv->reset_on_resume);
 	return 0;
 }
 #endif /* CONFIG_PM_SLEEP */
@@ -396,6 +392,12 @@ static const struct of_device_id vt8500_ehci_ids[] = {
 	{}
 };
 MODULE_DEVICE_TABLE(of, vt8500_ehci_ids);
+
+static const struct acpi_device_id ehci_acpi_match[] = {
+	{ "PNP0D20", 0 }, /* EHCI controller without debug */
+	{ }
+};
+MODULE_DEVICE_TABLE(acpi, ehci_acpi_match);
 
 static const struct platform_device_id ehci_platform_table[] = {
 	{ "ehci-platform", 0 },
@@ -415,6 +417,7 @@ static struct platform_driver ehci_platform_driver = {
 		.name	= "ehci-platform",
 		.pm	= &ehci_platform_pm_ops,
 		.of_match_table = vt8500_ehci_ids,
+		.acpi_match_table = ACPI_PTR(ehci_acpi_match),
 	}
 };
 

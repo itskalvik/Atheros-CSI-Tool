@@ -22,7 +22,8 @@
 #include <linux/audit.h>
 #include <linux/compat.h>
 #include <linux/kernel.h>
-#include <linux/sched.h>
+#include <linux/sched/signal.h>
+#include <linux/sched/task_stack.h>
 #include <linux/mm.h>
 #include <linux/smp.h>
 #include <linux/ptrace.h>
@@ -31,6 +32,7 @@
 #include <linux/security.h>
 #include <linux/init.h>
 #include <linux/signal.h>
+#include <linux/string.h>
 #include <linux/uaccess.h>
 #include <linux/perf_event.h>
 #include <linux/hw_breakpoint.h>
@@ -39,14 +41,117 @@
 #include <linux/elf.h>
 
 #include <asm/compat.h>
+#include <asm/cpufeature.h>
 #include <asm/debug-monitors.h>
 #include <asm/pgtable.h>
+#include <asm/stacktrace.h>
 #include <asm/syscall.h>
 #include <asm/traps.h>
 #include <asm/system_misc.h>
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/syscalls.h>
+
+struct pt_regs_offset {
+	const char *name;
+	int offset;
+};
+
+#define REG_OFFSET_NAME(r) {.name = #r, .offset = offsetof(struct pt_regs, r)}
+#define REG_OFFSET_END {.name = NULL, .offset = 0}
+#define GPR_OFFSET_NAME(r) \
+	{.name = "x" #r, .offset = offsetof(struct pt_regs, regs[r])}
+
+static const struct pt_regs_offset regoffset_table[] = {
+	GPR_OFFSET_NAME(0),
+	GPR_OFFSET_NAME(1),
+	GPR_OFFSET_NAME(2),
+	GPR_OFFSET_NAME(3),
+	GPR_OFFSET_NAME(4),
+	GPR_OFFSET_NAME(5),
+	GPR_OFFSET_NAME(6),
+	GPR_OFFSET_NAME(7),
+	GPR_OFFSET_NAME(8),
+	GPR_OFFSET_NAME(9),
+	GPR_OFFSET_NAME(10),
+	GPR_OFFSET_NAME(11),
+	GPR_OFFSET_NAME(12),
+	GPR_OFFSET_NAME(13),
+	GPR_OFFSET_NAME(14),
+	GPR_OFFSET_NAME(15),
+	GPR_OFFSET_NAME(16),
+	GPR_OFFSET_NAME(17),
+	GPR_OFFSET_NAME(18),
+	GPR_OFFSET_NAME(19),
+	GPR_OFFSET_NAME(20),
+	GPR_OFFSET_NAME(21),
+	GPR_OFFSET_NAME(22),
+	GPR_OFFSET_NAME(23),
+	GPR_OFFSET_NAME(24),
+	GPR_OFFSET_NAME(25),
+	GPR_OFFSET_NAME(26),
+	GPR_OFFSET_NAME(27),
+	GPR_OFFSET_NAME(28),
+	GPR_OFFSET_NAME(29),
+	GPR_OFFSET_NAME(30),
+	{.name = "lr", .offset = offsetof(struct pt_regs, regs[30])},
+	REG_OFFSET_NAME(sp),
+	REG_OFFSET_NAME(pc),
+	REG_OFFSET_NAME(pstate),
+	REG_OFFSET_END,
+};
+
+/**
+ * regs_query_register_offset() - query register offset from its name
+ * @name:	the name of a register
+ *
+ * regs_query_register_offset() returns the offset of a register in struct
+ * pt_regs from its name. If the name is invalid, this returns -EINVAL;
+ */
+int regs_query_register_offset(const char *name)
+{
+	const struct pt_regs_offset *roff;
+
+	for (roff = regoffset_table; roff->name != NULL; roff++)
+		if (!strcmp(roff->name, name))
+			return roff->offset;
+	return -EINVAL;
+}
+
+/**
+ * regs_within_kernel_stack() - check the address in the stack
+ * @regs:      pt_regs which contains kernel stack pointer.
+ * @addr:      address which is checked.
+ *
+ * regs_within_kernel_stack() checks @addr is within the kernel stack page(s).
+ * If @addr is within the kernel stack, it returns true. If not, returns false.
+ */
+static bool regs_within_kernel_stack(struct pt_regs *regs, unsigned long addr)
+{
+	return ((addr & ~(THREAD_SIZE - 1))  ==
+		(kernel_stack_pointer(regs) & ~(THREAD_SIZE - 1))) ||
+		on_irq_stack(addr);
+}
+
+/**
+ * regs_get_kernel_stack_nth() - get Nth entry of the stack
+ * @regs:	pt_regs which contains kernel stack pointer.
+ * @n:		stack entry number.
+ *
+ * regs_get_kernel_stack_nth() returns @n th entry of the kernel stack which
+ * is specified by @regs. If the @n th entry is NOT in the kernel stack,
+ * this returns 0.
+ */
+unsigned long regs_get_kernel_stack_nth(struct pt_regs *regs, unsigned int n)
+{
+	unsigned long *addr = (unsigned long *)kernel_stack_pointer(regs);
+
+	addr += n;
+	if (regs_within_kernel_stack(regs, (unsigned long)addr))
+		return *addr;
+	else
+		return 0;
+}
 
 /*
  * TODO: does not yet catch signals sent when the child dies.
@@ -58,6 +163,12 @@
  */
 void ptrace_disable(struct task_struct *child)
 {
+	/*
+	 * This would be better off in core code, but PTRACE_DETACH has
+	 * grown its fair share of arch-specific worts and changing it
+	 * is likely to cause regressions on obscure architectures.
+	 */
+	user_disable_single_step(child);
 }
 
 #ifdef CONFIG_HAVE_HW_BREAKPOINT
@@ -220,13 +331,13 @@ static int ptrace_hbp_fill_attr_ctrl(unsigned int note_type,
 				     struct arch_hw_breakpoint_ctrl ctrl,
 				     struct perf_event_attr *attr)
 {
-	int err, len, type, disabled = !ctrl.enabled;
+	int err, len, type, offset, disabled = !ctrl.enabled;
 
 	attr->disabled = disabled;
 	if (disabled)
 		return 0;
 
-	err = arch_bp_generic_fields(ctrl, &len, &type);
+	err = arch_bp_generic_fields(ctrl, &len, &type, &offset);
 	if (err)
 		return err;
 
@@ -245,6 +356,7 @@ static int ptrace_hbp_fill_attr_ctrl(unsigned int note_type,
 
 	attr->bp_len	= len;
 	attr->bp_type	= type;
+	attr->bp_addr	+= offset;
 
 	return 0;
 }
@@ -297,7 +409,7 @@ static int ptrace_hbp_get_addr(unsigned int note_type,
 	if (IS_ERR(bp))
 		return PTR_ERR(bp);
 
-	*addr = bp ? bp->attr.bp_addr : 0;
+	*addr = bp ? counter_arch_bp(bp)->address : 0;
 	return 0;
 }
 
@@ -443,6 +555,8 @@ static int hw_break_set(struct task_struct *target,
 	/* (address, ctrl) registers */
 	limit = regset->n * regset->size;
 	while (count && offset < limit) {
+		if (count < PTRACE_HBP_ADDR_SZ)
+			return -EINVAL;
 		ret = user_regset_copyin(&pos, &count, &kbuf, &ubuf, &addr,
 					 offset, offset + PTRACE_HBP_ADDR_SZ);
 		if (ret)
@@ -452,6 +566,8 @@ static int hw_break_set(struct task_struct *target,
 			return ret;
 		offset += PTRACE_HBP_ADDR_SZ;
 
+		if (!count)
+			break;
 		ret = user_regset_copyin(&pos, &count, &kbuf, &ubuf, &ctrl,
 					 offset, offset + PTRACE_HBP_CTRL_SZ);
 		if (ret)
@@ -488,13 +604,13 @@ static int gpr_set(struct task_struct *target, const struct user_regset *regset,
 		   const void *kbuf, const void __user *ubuf)
 {
 	int ret;
-	struct user_pt_regs newregs;
+	struct user_pt_regs newregs = task_pt_regs(target)->user_regs;
 
 	ret = user_regset_copyin(&pos, &count, &kbuf, &ubuf, &newregs, 0, -1);
 	if (ret)
 		return ret;
 
-	if (!valid_user_regs(&newregs))
+	if (!valid_user_regs(&newregs, target))
 		return -EINVAL;
 
 	task_pt_regs(target)->user_regs = newregs;
@@ -504,13 +620,56 @@ static int gpr_set(struct task_struct *target, const struct user_regset *regset,
 /*
  * TODO: update fp accessors for lazy context switching (sync/flush hwstate)
  */
+static int __fpr_get(struct task_struct *target,
+		     const struct user_regset *regset,
+		     unsigned int pos, unsigned int count,
+		     void *kbuf, void __user *ubuf, unsigned int start_pos)
+{
+	struct user_fpsimd_state *uregs;
+
+	sve_sync_to_fpsimd(target);
+
+	uregs = &target->thread.fpsimd_state.user_fpsimd;
+
+	return user_regset_copyout(&pos, &count, &kbuf, &ubuf, uregs,
+				   start_pos, start_pos + sizeof(*uregs));
+}
+
 static int fpr_get(struct task_struct *target, const struct user_regset *regset,
 		   unsigned int pos, unsigned int count,
 		   void *kbuf, void __user *ubuf)
 {
-	struct user_fpsimd_state *uregs;
-	uregs = &target->thread.fpsimd_state.user_fpsimd;
-	return user_regset_copyout(&pos, &count, &kbuf, &ubuf, uregs, 0, -1);
+	if (target == current)
+		fpsimd_preserve_current_state();
+
+	return __fpr_get(target, regset, pos, count, kbuf, ubuf, 0);
+}
+
+static int __fpr_set(struct task_struct *target,
+		     const struct user_regset *regset,
+		     unsigned int pos, unsigned int count,
+		     const void *kbuf, const void __user *ubuf,
+		     unsigned int start_pos)
+{
+	int ret;
+	struct user_fpsimd_state newstate;
+
+	/*
+	 * Ensure target->thread.fpsimd_state is up to date, so that a
+	 * short copyin can't resurrect stale data.
+	 */
+	sve_sync_to_fpsimd(target);
+
+	newstate = target->thread.fpsimd_state.user_fpsimd;
+
+	ret = user_regset_copyin(&pos, &count, &kbuf, &ubuf, &newstate,
+				 start_pos, start_pos + sizeof(newstate));
+	if (ret)
+		return ret;
+
+	target->thread.fpsimd_state.user_fpsimd = newstate;
+
+	return ret;
 }
 
 static int fpr_set(struct task_struct *target, const struct user_regset *regset,
@@ -518,14 +677,14 @@ static int fpr_set(struct task_struct *target, const struct user_regset *regset,
 		   const void *kbuf, const void __user *ubuf)
 {
 	int ret;
-	struct user_fpsimd_state newstate;
 
-	ret = user_regset_copyin(&pos, &count, &kbuf, &ubuf, &newstate, 0, -1);
+	ret = __fpr_set(target, regset, pos, count, kbuf, ubuf, 0);
 	if (ret)
 		return ret;
 
-	target->thread.fpsimd_state.user_fpsimd = newstate;
+	sve_sync_from_fpsimd_zeropad(target);
 	fpsimd_flush_task_state(target);
+
 	return ret;
 }
 
@@ -534,6 +693,10 @@ static int tls_get(struct task_struct *target, const struct user_regset *regset,
 		   void *kbuf, void __user *ubuf)
 {
 	unsigned long *tls = &target->thread.tp_value;
+
+	if (target == current)
+		tls_preserve_current_state();
+
 	return user_regset_copyout(&pos, &count, &kbuf, &ubuf, tls, 0, -1);
 }
 
@@ -542,7 +705,7 @@ static int tls_set(struct task_struct *target, const struct user_regset *regset,
 		   const void *kbuf, const void __user *ubuf)
 {
 	int ret;
-	unsigned long tls;
+	unsigned long tls = target->thread.tp_value;
 
 	ret = user_regset_copyin(&pos, &count, &kbuf, &ubuf, &tls, 0, -1);
 	if (ret)
@@ -568,7 +731,8 @@ static int system_call_set(struct task_struct *target,
 			   unsigned int pos, unsigned int count,
 			   const void *kbuf, const void __user *ubuf)
 {
-	int syscallno, ret;
+	int syscallno = task_pt_regs(target)->syscallno;
+	int ret;
 
 	ret = user_regset_copyin(&pos, &count, &kbuf, &ubuf, &syscallno, 0, -1);
 	if (ret)
@@ -577,6 +741,215 @@ static int system_call_set(struct task_struct *target,
 	task_pt_regs(target)->syscallno = syscallno;
 	return ret;
 }
+
+#ifdef CONFIG_ARM64_SVE
+
+static void sve_init_header_from_task(struct user_sve_header *header,
+				      struct task_struct *target)
+{
+	unsigned int vq;
+
+	memset(header, 0, sizeof(*header));
+
+	header->flags = test_tsk_thread_flag(target, TIF_SVE) ?
+		SVE_PT_REGS_SVE : SVE_PT_REGS_FPSIMD;
+	if (test_tsk_thread_flag(target, TIF_SVE_VL_INHERIT))
+		header->flags |= SVE_PT_VL_INHERIT;
+
+	header->vl = target->thread.sve_vl;
+	vq = sve_vq_from_vl(header->vl);
+
+	header->max_vl = sve_max_vl;
+	if (WARN_ON(!sve_vl_valid(sve_max_vl)))
+		header->max_vl = header->vl;
+
+	header->size = SVE_PT_SIZE(vq, header->flags);
+	header->max_size = SVE_PT_SIZE(sve_vq_from_vl(header->max_vl),
+				      SVE_PT_REGS_SVE);
+}
+
+static unsigned int sve_size_from_header(struct user_sve_header const *header)
+{
+	return ALIGN(header->size, SVE_VQ_BYTES);
+}
+
+static unsigned int sve_get_size(struct task_struct *target,
+				 const struct user_regset *regset)
+{
+	struct user_sve_header header;
+
+	if (!system_supports_sve())
+		return 0;
+
+	sve_init_header_from_task(&header, target);
+	return sve_size_from_header(&header);
+}
+
+static int sve_get(struct task_struct *target,
+		   const struct user_regset *regset,
+		   unsigned int pos, unsigned int count,
+		   void *kbuf, void __user *ubuf)
+{
+	int ret;
+	struct user_sve_header header;
+	unsigned int vq;
+	unsigned long start, end;
+
+	if (!system_supports_sve())
+		return -EINVAL;
+
+	/* Header */
+	sve_init_header_from_task(&header, target);
+	vq = sve_vq_from_vl(header.vl);
+
+	ret = user_regset_copyout(&pos, &count, &kbuf, &ubuf, &header,
+				  0, sizeof(header));
+	if (ret)
+		return ret;
+
+	if (target == current)
+		fpsimd_preserve_current_state();
+
+	/* Registers: FPSIMD-only case */
+
+	BUILD_BUG_ON(SVE_PT_FPSIMD_OFFSET != sizeof(header));
+	if ((header.flags & SVE_PT_REGS_MASK) == SVE_PT_REGS_FPSIMD)
+		return __fpr_get(target, regset, pos, count, kbuf, ubuf,
+				 SVE_PT_FPSIMD_OFFSET);
+
+	/* Otherwise: full SVE case */
+
+	BUILD_BUG_ON(SVE_PT_SVE_OFFSET != sizeof(header));
+	start = SVE_PT_SVE_OFFSET;
+	end = SVE_PT_SVE_FFR_OFFSET(vq) + SVE_PT_SVE_FFR_SIZE(vq);
+	ret = user_regset_copyout(&pos, &count, &kbuf, &ubuf,
+				  target->thread.sve_state,
+				  start, end);
+	if (ret)
+		return ret;
+
+	start = end;
+	end = SVE_PT_SVE_FPSR_OFFSET(vq);
+	ret = user_regset_copyout_zero(&pos, &count, &kbuf, &ubuf,
+				       start, end);
+	if (ret)
+		return ret;
+
+	/*
+	 * Copy fpsr, and fpcr which must follow contiguously in
+	 * struct fpsimd_state:
+	 */
+	start = end;
+	end = SVE_PT_SVE_FPCR_OFFSET(vq) + SVE_PT_SVE_FPCR_SIZE;
+	ret = user_regset_copyout(&pos, &count, &kbuf, &ubuf,
+				  &target->thread.fpsimd_state.fpsr,
+				  start, end);
+	if (ret)
+		return ret;
+
+	start = end;
+	end = sve_size_from_header(&header);
+	return user_regset_copyout_zero(&pos, &count, &kbuf, &ubuf,
+					start, end);
+}
+
+static int sve_set(struct task_struct *target,
+		   const struct user_regset *regset,
+		   unsigned int pos, unsigned int count,
+		   const void *kbuf, const void __user *ubuf)
+{
+	int ret;
+	struct user_sve_header header;
+	unsigned int vq;
+	unsigned long start, end;
+
+	if (!system_supports_sve())
+		return -EINVAL;
+
+	/* Header */
+	if (count < sizeof(header))
+		return -EINVAL;
+	ret = user_regset_copyin(&pos, &count, &kbuf, &ubuf, &header,
+				 0, sizeof(header));
+	if (ret)
+		goto out;
+
+	/*
+	 * Apart from PT_SVE_REGS_MASK, all PT_SVE_* flags are consumed by
+	 * sve_set_vector_length(), which will also validate them for us:
+	 */
+	ret = sve_set_vector_length(target, header.vl,
+		((unsigned long)header.flags & ~SVE_PT_REGS_MASK) << 16);
+	if (ret)
+		goto out;
+
+	/* Actual VL set may be less than the user asked for: */
+	vq = sve_vq_from_vl(target->thread.sve_vl);
+
+	/* Registers: FPSIMD-only case */
+
+	BUILD_BUG_ON(SVE_PT_FPSIMD_OFFSET != sizeof(header));
+	if ((header.flags & SVE_PT_REGS_MASK) == SVE_PT_REGS_FPSIMD) {
+		ret = __fpr_set(target, regset, pos, count, kbuf, ubuf,
+				SVE_PT_FPSIMD_OFFSET);
+		clear_tsk_thread_flag(target, TIF_SVE);
+		goto out;
+	}
+
+	/* Otherwise: full SVE case */
+
+	/*
+	 * If setting a different VL from the requested VL and there is
+	 * register data, the data layout will be wrong: don't even
+	 * try to set the registers in this case.
+	 */
+	if (count && vq != sve_vq_from_vl(header.vl)) {
+		ret = -EIO;
+		goto out;
+	}
+
+	sve_alloc(target);
+
+	/*
+	 * Ensure target->thread.sve_state is up to date with target's
+	 * FPSIMD regs, so that a short copyin leaves trailing registers
+	 * unmodified.
+	 */
+	fpsimd_sync_to_sve(target);
+	set_tsk_thread_flag(target, TIF_SVE);
+
+	BUILD_BUG_ON(SVE_PT_SVE_OFFSET != sizeof(header));
+	start = SVE_PT_SVE_OFFSET;
+	end = SVE_PT_SVE_FFR_OFFSET(vq) + SVE_PT_SVE_FFR_SIZE(vq);
+	ret = user_regset_copyin(&pos, &count, &kbuf, &ubuf,
+				 target->thread.sve_state,
+				 start, end);
+	if (ret)
+		goto out;
+
+	start = end;
+	end = SVE_PT_SVE_FPSR_OFFSET(vq);
+	ret = user_regset_copyin_ignore(&pos, &count, &kbuf, &ubuf,
+					start, end);
+	if (ret)
+		goto out;
+
+	/*
+	 * Copy fpsr, and fpcr which must follow contiguously in
+	 * struct fpsimd_state:
+	 */
+	start = end;
+	end = SVE_PT_SVE_FPCR_OFFSET(vq) + SVE_PT_SVE_FPCR_SIZE;
+	ret = user_regset_copyin(&pos, &count, &kbuf, &ubuf,
+				 &target->thread.fpsimd_state.fpsr,
+				 start, end);
+
+out:
+	fpsimd_flush_task_state(target);
+	return ret;
+}
+
+#endif /* CONFIG_ARM64_SVE */
 
 enum aarch64_regset {
 	REGSET_GPR,
@@ -587,6 +960,9 @@ enum aarch64_regset {
 	REGSET_HW_WATCH,
 #endif
 	REGSET_SYSTEM_CALL,
+#ifdef CONFIG_ARM64_SVE
+	REGSET_SVE,
+#endif
 };
 
 static const struct user_regset aarch64_regsets[] = {
@@ -644,6 +1020,18 @@ static const struct user_regset aarch64_regsets[] = {
 		.get = system_call_get,
 		.set = system_call_set,
 	},
+#ifdef CONFIG_ARM64_SVE
+	[REGSET_SVE] = { /* Scalable Vector Extension */
+		.core_note_type = NT_ARM_SVE,
+		.n = DIV_ROUND_UP(SVE_PT_SIZE(SVE_VQ_MAX, SVE_PT_REGS_SVE),
+				  SVE_VQ_BYTES),
+		.size = SVE_VQ_BYTES,
+		.align = SVE_VQ_BYTES,
+		.get = sve_get,
+		.set = sve_set,
+		.get_size = sve_get_size,
+	},
+#endif
 };
 
 static const struct user_regset_view user_aarch64_view = {
@@ -764,7 +1152,7 @@ static int compat_gpr_set(struct task_struct *target,
 
 	}
 
-	if (valid_user_regs(&newregs.user_regs))
+	if (valid_user_regs(&newregs.user_regs, target))
 		*task_pt_regs(target) = newregs;
 	else
 		ret = -EINVAL;
@@ -779,21 +1167,27 @@ static int compat_vfp_get(struct task_struct *target,
 {
 	struct user_fpsimd_state *uregs;
 	compat_ulong_t fpscr;
-	int ret;
+	int ret, vregs_end_pos;
 
 	uregs = &target->thread.fpsimd_state.user_fpsimd;
+
+	if (target == current)
+		fpsimd_preserve_current_state();
 
 	/*
 	 * The VFP registers are packed into the fpsimd_state, so they all sit
 	 * nicely together for us. We just need to create the fpscr separately.
 	 */
-	ret = user_regset_copyout(&pos, &count, &kbuf, &ubuf, uregs, 0,
-				  VFP_STATE_SIZE - sizeof(compat_ulong_t));
+	vregs_end_pos = VFP_STATE_SIZE - sizeof(compat_ulong_t);
+	ret = user_regset_copyout(&pos, &count, &kbuf, &ubuf, uregs,
+				  0, vregs_end_pos);
 
 	if (count && !ret) {
 		fpscr = (uregs->fpsr & VFP_FPSCR_STAT_MASK) |
 			(uregs->fpcr & VFP_FPSCR_CTRL_MASK);
-		ret = put_user(fpscr, (compat_ulong_t *)ubuf);
+
+		ret = user_regset_copyout(&pos, &count, &kbuf, &ubuf, &fpscr,
+					  vregs_end_pos, VFP_STATE_SIZE);
 	}
 
 	return ret;
@@ -806,23 +1200,48 @@ static int compat_vfp_set(struct task_struct *target,
 {
 	struct user_fpsimd_state *uregs;
 	compat_ulong_t fpscr;
-	int ret;
-
-	if (pos + count > VFP_STATE_SIZE)
-		return -EIO;
+	int ret, vregs_end_pos;
 
 	uregs = &target->thread.fpsimd_state.user_fpsimd;
 
+	vregs_end_pos = VFP_STATE_SIZE - sizeof(compat_ulong_t);
 	ret = user_regset_copyin(&pos, &count, &kbuf, &ubuf, uregs, 0,
-				 VFP_STATE_SIZE - sizeof(compat_ulong_t));
+				 vregs_end_pos);
 
 	if (count && !ret) {
-		ret = get_user(fpscr, (compat_ulong_t *)ubuf);
-		uregs->fpsr = fpscr & VFP_FPSCR_STAT_MASK;
-		uregs->fpcr = fpscr & VFP_FPSCR_CTRL_MASK;
+		ret = user_regset_copyin(&pos, &count, &kbuf, &ubuf, &fpscr,
+					 vregs_end_pos, VFP_STATE_SIZE);
+		if (!ret) {
+			uregs->fpsr = fpscr & VFP_FPSCR_STAT_MASK;
+			uregs->fpcr = fpscr & VFP_FPSCR_CTRL_MASK;
+		}
 	}
 
 	fpsimd_flush_task_state(target);
+	return ret;
+}
+
+static int compat_tls_get(struct task_struct *target,
+			  const struct user_regset *regset, unsigned int pos,
+			  unsigned int count, void *kbuf, void __user *ubuf)
+{
+	compat_ulong_t tls = (compat_ulong_t)target->thread.tp_value;
+	return user_regset_copyout(&pos, &count, &kbuf, &ubuf, &tls, 0, -1);
+}
+
+static int compat_tls_set(struct task_struct *target,
+			  const struct user_regset *regset, unsigned int pos,
+			  unsigned int count, const void *kbuf,
+			  const void __user *ubuf)
+{
+	int ret;
+	compat_ulong_t tls = target->thread.tp_value;
+
+	ret = user_regset_copyin(&pos, &count, &kbuf, &ubuf, &tls, 0, -1);
+	if (ret)
+		return ret;
+
+	target->thread.tp_value = tls;
 	return ret;
 }
 
@@ -848,6 +1267,64 @@ static const struct user_regset aarch32_regsets[] = {
 static const struct user_regset_view user_aarch32_view = {
 	.name = "aarch32", .e_machine = EM_ARM,
 	.regsets = aarch32_regsets, .n = ARRAY_SIZE(aarch32_regsets)
+};
+
+static const struct user_regset aarch32_ptrace_regsets[] = {
+	[REGSET_GPR] = {
+		.core_note_type = NT_PRSTATUS,
+		.n = COMPAT_ELF_NGREG,
+		.size = sizeof(compat_elf_greg_t),
+		.align = sizeof(compat_elf_greg_t),
+		.get = compat_gpr_get,
+		.set = compat_gpr_set
+	},
+	[REGSET_FPR] = {
+		.core_note_type = NT_ARM_VFP,
+		.n = VFP_STATE_SIZE / sizeof(compat_ulong_t),
+		.size = sizeof(compat_ulong_t),
+		.align = sizeof(compat_ulong_t),
+		.get = compat_vfp_get,
+		.set = compat_vfp_set
+	},
+	[REGSET_TLS] = {
+		.core_note_type = NT_ARM_TLS,
+		.n = 1,
+		.size = sizeof(compat_ulong_t),
+		.align = sizeof(compat_ulong_t),
+		.get = compat_tls_get,
+		.set = compat_tls_set,
+	},
+#ifdef CONFIG_HAVE_HW_BREAKPOINT
+	[REGSET_HW_BREAK] = {
+		.core_note_type = NT_ARM_HW_BREAK,
+		.n = sizeof(struct user_hwdebug_state) / sizeof(u32),
+		.size = sizeof(u32),
+		.align = sizeof(u32),
+		.get = hw_break_get,
+		.set = hw_break_set,
+	},
+	[REGSET_HW_WATCH] = {
+		.core_note_type = NT_ARM_HW_WATCH,
+		.n = sizeof(struct user_hwdebug_state) / sizeof(u32),
+		.size = sizeof(u32),
+		.align = sizeof(u32),
+		.get = hw_break_get,
+		.set = hw_break_set,
+	},
+#endif
+	[REGSET_SYSTEM_CALL] = {
+		.core_note_type = NT_ARM_SYSTEM_CALL,
+		.n = 1,
+		.size = sizeof(int),
+		.align = sizeof(int),
+		.get = system_call_get,
+		.set = system_call_set,
+	},
+};
+
+static const struct user_regset_view user_aarch32_ptrace_view = {
+	.name = "aarch32", .e_machine = EM_ARM,
+	.regsets = aarch32_ptrace_regsets, .n = ARRAY_SIZE(aarch32_ptrace_regsets)
 };
 
 static int compat_ptrace_read_user(struct task_struct *tsk, compat_ulong_t off,
@@ -1109,8 +1586,16 @@ long compat_arch_ptrace(struct task_struct *child, compat_long_t request,
 const struct user_regset_view *task_user_regset_view(struct task_struct *task)
 {
 #ifdef CONFIG_COMPAT
-	if (is_compat_thread(task_thread_info(task)))
+	/*
+	 * Core dumping of 32-bit tasks or compat ptrace requests must use the
+	 * user_aarch32_view compatible with arm32. Native ptrace requests on
+	 * 32-bit children use an extended user_aarch32_ptrace_view to allow
+	 * access to the TLS register.
+	 */
+	if (is_compat_task())
 		return &user_aarch32_view;
+	else if (is_compat_thread(task_thread_info(task)))
+		return &user_aarch32_ptrace_view;
 #endif
 	return &user_aarch64_view;
 }
@@ -1143,19 +1628,19 @@ static void tracehook_report_syscall(struct pt_regs *regs,
 	if (dir == PTRACE_SYSCALL_EXIT)
 		tracehook_report_syscall_exit(regs, 0);
 	else if (tracehook_report_syscall_entry(regs))
-		regs->syscallno = ~0UL;
+		forget_syscall(regs);
 
 	regs->regs[regno] = saved_reg;
 }
 
 asmlinkage int syscall_trace_enter(struct pt_regs *regs)
 {
-	/* Do the secure computing check first; failures should be fast. */
-	if (secure_computing() == -1)
-		return -1;
-
 	if (test_thread_flag(TIF_SYSCALL_TRACE))
 		tracehook_report_syscall(regs, PTRACE_SYSCALL_ENTER);
+
+	/* Do the secure computing after ptrace; failures should be fast. */
+	if (secure_computing(NULL) == -1)
+		return -1;
 
 	if (test_thread_flag(TIF_SYSCALL_TRACEPOINT))
 		trace_sys_enter(regs, regs->syscallno);
@@ -1175,4 +1660,80 @@ asmlinkage void syscall_trace_exit(struct pt_regs *regs)
 
 	if (test_thread_flag(TIF_SYSCALL_TRACE))
 		tracehook_report_syscall(regs, PTRACE_SYSCALL_EXIT);
+}
+
+/*
+ * Bits which are always architecturally RES0 per ARM DDI 0487A.h
+ * Userspace cannot use these until they have an architectural meaning.
+ * We also reserve IL for the kernel; SS is handled dynamically.
+ */
+#define SPSR_EL1_AARCH64_RES0_BITS \
+	(GENMASK_ULL(63,32) | GENMASK_ULL(27, 22) | GENMASK_ULL(20, 10) | \
+	 GENMASK_ULL(5, 5))
+#define SPSR_EL1_AARCH32_RES0_BITS \
+	(GENMASK_ULL(63,32) | GENMASK_ULL(24, 22) | GENMASK_ULL(20,20))
+
+static int valid_compat_regs(struct user_pt_regs *regs)
+{
+	regs->pstate &= ~SPSR_EL1_AARCH32_RES0_BITS;
+
+	if (!system_supports_mixed_endian_el0()) {
+		if (IS_ENABLED(CONFIG_CPU_BIG_ENDIAN))
+			regs->pstate |= COMPAT_PSR_E_BIT;
+		else
+			regs->pstate &= ~COMPAT_PSR_E_BIT;
+	}
+
+	if (user_mode(regs) && (regs->pstate & PSR_MODE32_BIT) &&
+	    (regs->pstate & COMPAT_PSR_A_BIT) == 0 &&
+	    (regs->pstate & COMPAT_PSR_I_BIT) == 0 &&
+	    (regs->pstate & COMPAT_PSR_F_BIT) == 0) {
+		return 1;
+	}
+
+	/*
+	 * Force PSR to a valid 32-bit EL0t, preserving the same bits as
+	 * arch/arm.
+	 */
+	regs->pstate &= COMPAT_PSR_N_BIT | COMPAT_PSR_Z_BIT |
+			COMPAT_PSR_C_BIT | COMPAT_PSR_V_BIT |
+			COMPAT_PSR_Q_BIT | COMPAT_PSR_IT_MASK |
+			COMPAT_PSR_GE_MASK | COMPAT_PSR_E_BIT |
+			COMPAT_PSR_T_BIT;
+	regs->pstate |= PSR_MODE32_BIT;
+
+	return 0;
+}
+
+static int valid_native_regs(struct user_pt_regs *regs)
+{
+	regs->pstate &= ~SPSR_EL1_AARCH64_RES0_BITS;
+
+	if (user_mode(regs) && !(regs->pstate & PSR_MODE32_BIT) &&
+	    (regs->pstate & PSR_D_BIT) == 0 &&
+	    (regs->pstate & PSR_A_BIT) == 0 &&
+	    (regs->pstate & PSR_I_BIT) == 0 &&
+	    (regs->pstate & PSR_F_BIT) == 0) {
+		return 1;
+	}
+
+	/* Force PSR to a valid 64-bit EL0t */
+	regs->pstate &= PSR_N_BIT | PSR_Z_BIT | PSR_C_BIT | PSR_V_BIT;
+
+	return 0;
+}
+
+/*
+ * Are the current registers suitable for user mode? (used to maintain
+ * security in signal handlers)
+ */
+int valid_user_regs(struct user_pt_regs *regs, struct task_struct *task)
+{
+	if (!test_tsk_thread_flag(task, TIF_SINGLESTEP))
+		regs->pstate &= ~DBG_SPSR_SS;
+
+	if (is_compat_thread(task_thread_info(task)))
+		return valid_compat_regs(regs);
+	else
+		return valid_native_regs(regs);
 }

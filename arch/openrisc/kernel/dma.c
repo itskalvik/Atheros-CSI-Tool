@@ -22,7 +22,6 @@
 #include <linux/dma-mapping.h>
 #include <linux/dma-debug.h>
 #include <linux/export.h>
-#include <linux/dma-attrs.h>
 
 #include <asm/cpuinfo.h>
 #include <asm/spr_defs.h>
@@ -33,6 +32,7 @@ page_set_nocache(pte_t *pte, unsigned long addr,
 		 unsigned long next, struct mm_walk *walk)
 {
 	unsigned long cl;
+	struct cpuinfo_or1k *cpuinfo = &cpuinfo_or1k[smp_processor_id()];
 
 	pte_val(*pte) |= _PAGE_CI;
 
@@ -43,7 +43,7 @@ page_set_nocache(pte_t *pte, unsigned long addr,
 	flush_tlb_page(NULL, addr);
 
 	/* Flush page out of dcache */
-	for (cl = __pa(addr); cl < __pa(next); cl += cpuinfo.dcache_block_size)
+	for (cl = __pa(addr); cl < __pa(next); cl += cpuinfo->dcache_block_size)
 		mtspr(SPR_DCBFR, cl);
 
 	return 0;
@@ -83,7 +83,7 @@ page_clear_nocache(pte_t *pte, unsigned long addr,
 static void *
 or1k_dma_alloc(struct device *dev, size_t size,
 	       dma_addr_t *dma_handle, gfp_t gfp,
-	       struct dma_attrs *attrs)
+	       unsigned long attrs)
 {
 	unsigned long va;
 	void *page;
@@ -101,7 +101,7 @@ or1k_dma_alloc(struct device *dev, size_t size,
 
 	va = (unsigned long)page;
 
-	if (!dma_get_attr(DMA_ATTR_NON_CONSISTENT, attrs)) {
+	if ((attrs & DMA_ATTR_NON_CONSISTENT) == 0) {
 		/*
 		 * We need to iterate through the pages, clearing the dcache for
 		 * them and setting the cache-inhibit bit.
@@ -117,7 +117,7 @@ or1k_dma_alloc(struct device *dev, size_t size,
 
 static void
 or1k_dma_free(struct device *dev, size_t size, void *vaddr,
-	      dma_addr_t dma_handle, struct dma_attrs *attrs)
+	      dma_addr_t dma_handle, unsigned long attrs)
 {
 	unsigned long va = (unsigned long)vaddr;
 	struct mm_walk walk = {
@@ -125,7 +125,7 @@ or1k_dma_free(struct device *dev, size_t size, void *vaddr,
 		.mm = &init_mm
 	};
 
-	if (!dma_get_attr(DMA_ATTR_NON_CONSISTENT, attrs)) {
+	if ((attrs & DMA_ATTR_NON_CONSISTENT) == 0) {
 		/* walk_page_range shouldn't be able to fail here */
 		WARN_ON(walk_page_range(va, va + size, &walk));
 	}
@@ -137,22 +137,26 @@ static dma_addr_t
 or1k_map_page(struct device *dev, struct page *page,
 	      unsigned long offset, size_t size,
 	      enum dma_data_direction dir,
-	      struct dma_attrs *attrs)
+	      unsigned long attrs)
 {
 	unsigned long cl;
 	dma_addr_t addr = page_to_phys(page) + offset;
+	struct cpuinfo_or1k *cpuinfo = &cpuinfo_or1k[smp_processor_id()];
+
+	if (attrs & DMA_ATTR_SKIP_CPU_SYNC)
+		return addr;
 
 	switch (dir) {
 	case DMA_TO_DEVICE:
 		/* Flush the dcache for the requested range */
 		for (cl = addr; cl < addr + size;
-		     cl += cpuinfo.dcache_block_size)
+		     cl += cpuinfo->dcache_block_size)
 			mtspr(SPR_DCBFR, cl);
 		break;
 	case DMA_FROM_DEVICE:
 		/* Invalidate the dcache for the requested range */
 		for (cl = addr; cl < addr + size;
-		     cl += cpuinfo.dcache_block_size)
+		     cl += cpuinfo->dcache_block_size)
 			mtspr(SPR_DCBIR, cl);
 		break;
 	default:
@@ -170,7 +174,7 @@ or1k_map_page(struct device *dev, struct page *page,
 static void
 or1k_unmap_page(struct device *dev, dma_addr_t dma_handle,
 		size_t size, enum dma_data_direction dir,
-		struct dma_attrs *attrs)
+		unsigned long attrs)
 {
 	/* Nothing special to do here... */
 }
@@ -178,14 +182,14 @@ or1k_unmap_page(struct device *dev, dma_addr_t dma_handle,
 static int
 or1k_map_sg(struct device *dev, struct scatterlist *sg,
 	    int nents, enum dma_data_direction dir,
-	    struct dma_attrs *attrs)
+	    unsigned long attrs)
 {
 	struct scatterlist *s;
 	int i;
 
 	for_each_sg(sg, s, nents, i) {
 		s->dma_address = or1k_map_page(dev, sg_page(s), s->offset,
-					       s->length, dir, NULL);
+					       s->length, dir, 0);
 	}
 
 	return nents;
@@ -194,13 +198,13 @@ or1k_map_sg(struct device *dev, struct scatterlist *sg,
 static void
 or1k_unmap_sg(struct device *dev, struct scatterlist *sg,
 	      int nents, enum dma_data_direction dir,
-	      struct dma_attrs *attrs)
+	      unsigned long attrs)
 {
 	struct scatterlist *s;
 	int i;
 
 	for_each_sg(sg, s, nents, i) {
-		or1k_unmap_page(dev, sg_dma_address(s), sg_dma_len(s), dir, NULL);
+		or1k_unmap_page(dev, sg_dma_address(s), sg_dma_len(s), dir, 0);
 	}
 }
 
@@ -211,9 +215,10 @@ or1k_sync_single_for_cpu(struct device *dev,
 {
 	unsigned long cl;
 	dma_addr_t addr = dma_handle;
+	struct cpuinfo_or1k *cpuinfo = &cpuinfo_or1k[smp_processor_id()];
 
 	/* Invalidate the dcache for the requested range */
-	for (cl = addr; cl < addr + size; cl += cpuinfo.dcache_block_size)
+	for (cl = addr; cl < addr + size; cl += cpuinfo->dcache_block_size)
 		mtspr(SPR_DCBIR, cl);
 }
 
@@ -224,13 +229,14 @@ or1k_sync_single_for_device(struct device *dev,
 {
 	unsigned long cl;
 	dma_addr_t addr = dma_handle;
+	struct cpuinfo_or1k *cpuinfo = &cpuinfo_or1k[smp_processor_id()];
 
 	/* Flush the dcache for the requested range */
-	for (cl = addr; cl < addr + size; cl += cpuinfo.dcache_block_size)
+	for (cl = addr; cl < addr + size; cl += cpuinfo->dcache_block_size)
 		mtspr(SPR_DCBFR, cl);
 }
 
-struct dma_map_ops or1k_dma_map_ops = {
+const struct dma_map_ops or1k_dma_map_ops = {
 	.alloc = or1k_dma_alloc,
 	.free = or1k_dma_free,
 	.map_page = or1k_map_page,

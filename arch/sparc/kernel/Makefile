@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0
 
 #
 # Makefile for the linux kernel.
@@ -21,6 +22,7 @@ CFLAGS_REMOVE_perf_event.o := -pg
 CFLAGS_REMOVE_pcr.o := -pg
 endif
 
+obj-$(CONFIG_SPARC64)   += urtt_fill.o
 obj-$(CONFIG_SPARC32)   += entry.o wof.o wuf.o
 obj-$(CONFIG_SPARC32)   += etrap_32.o
 obj-$(CONFIG_SPARC32)   += rtrap_32.o
@@ -41,6 +43,7 @@ obj-$(CONFIG_SPARC32)   += systbls_32.o
 obj-y                   += time_$(BITS).o
 obj-$(CONFIG_SPARC32)   += windows.o
 obj-y                   += cpu.o
+obj-$(CONFIG_SPARC64)	+= vdso.o
 obj-$(CONFIG_SPARC32)   += devices.o
 obj-y                   += ptrace_$(BITS).o
 obj-y                   += unaligned_$(BITS).o
@@ -85,7 +88,7 @@ obj-y                     += auxio_$(BITS).o
 obj-$(CONFIG_SUN_PM)      += apc.o pmc.o
 
 obj-$(CONFIG_MODULES)     += module.o
-obj-$(CONFIG_MODULES)     += sparc_ksyms_$(BITS).o
+obj-$(CONFIG_MODULES)     += sparc_ksyms.o
 obj-$(CONFIG_SPARC_LED)   += led.o
 obj-$(CONFIG_KGDB)        += kgdb_$(BITS).o
 
@@ -115,4 +118,5 @@ obj-$(CONFIG_COMPAT)    += $(audit--y)
 pc--$(CONFIG_PERF_EVENTS) := perf_event.o
 obj-$(CONFIG_SPARC64)	+= $(pc--y)
 
+obj-$(CONFIG_UPROBES)	+= uprobes.o
 obj-$(CONFIG_SPARC64)	+= jump_label.o

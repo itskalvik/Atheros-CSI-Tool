@@ -86,7 +86,7 @@ typedef struct {
 	char *device_name;
 } hfc4s8s_param;
 
-static struct pci_device_id hfc4s8s_ids[] = {
+static const struct pci_device_id hfc4s8s_ids[] = {
 	{.vendor = PCI_VENDOR_ID_CCD,
 	 .device = PCI_DEVICE_ID_4S,
 	 .subvendor = 0x1397,
@@ -591,8 +591,9 @@ bch_l2l1(struct hisax_if *ifc, int pr, void *arg)
 /* layer 1 timer function */
 /**************************/
 static void
-hfc_l1_timer(struct hfc4s8s_l1 *l1)
+hfc_l1_timer(struct timer_list *t)
 {
+	struct hfc4s8s_l1 *l1 = from_timer(l1, t, l1_timer);
 	u_long flags;
 
 	if (!l1->enabled)
@@ -646,14 +647,14 @@ rx_d_frame(struct hfc4s8s_l1 *l1p, int ech)
 
 		f1 = Read_hfc8_stable(l1p->hw, A_F1);
 		f2 = Read_hfc8(l1p->hw, A_F2);
-		df = f1 - f2;
-		if ((f1 - f2) < 0)
-			df = f1 - f2 + MAX_F_CNT + 1;
 
+		if (f1 < f2)
+			df = MAX_F_CNT + 1 + f1 - f2;
+		else
+			df = f1 - f2;
 
-		if (!df) {
+		if (!df)
 			return;	/* no complete frame in fifo */
-		}
 
 		z1 = Read_hfc16_stable(l1p->hw, A_Z1);
 		z2 = Read_hfc16(l1p->hw, A_Z2);
@@ -1396,9 +1397,7 @@ setup_instance(hfc4s8s_hw *hw)
 		l1p = hw->l1 + i;
 		spin_lock_init(&l1p->lock);
 		l1p->hw = hw;
-		l1p->l1_timer.function = (void *) hfc_l1_timer;
-		l1p->l1_timer.data = (long) (l1p);
-		init_timer(&l1p->l1_timer);
+		timer_setup(&l1p->l1_timer, hfc_l1_timer, 0);
 		l1p->st_num = i;
 		skb_queue_head_init(&l1p->d_tx_queue);
 		l1p->d_if.ifc.priv = hw->l1 + i;
@@ -1499,6 +1498,7 @@ hfc4s8s_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 		printk(KERN_INFO
 		       "HFC-4S/8S: failed to request address space at 0x%04x\n",
 		       hw->iobase);
+		err = -EBUSY;
 		goto out;
 	}
 

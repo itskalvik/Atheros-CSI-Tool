@@ -25,6 +25,8 @@
 #include <linux/module.h>
 #include <linux/mISDNif.h>
 #include <linux/mutex.h>
+#include <linux/sched/signal.h>
+
 #include "core.h"
 
 static DEFINE_MUTEX(mISDN_mutex);
@@ -160,9 +162,9 @@ mISDN_poll(struct file *filep, poll_table *wait)
 }
 
 static void
-dev_expire_timer(unsigned long data)
+dev_expire_timer(struct timer_list *t)
 {
-	struct mISDNtimer *timer = (void *)data;
+	struct mISDNtimer *timer = from_timer(timer, t, tl);
 	u_long			flags;
 
 	spin_lock_irqsave(&timer->dev->lock, flags);
@@ -187,7 +189,7 @@ misdn_add_timer(struct mISDNtimerdev *dev, int timeout)
 		if (!timer)
 			return -ENOMEM;
 		timer->dev = dev;
-		setup_timer(&timer->tl, dev_expire_timer, (long)timer);
+		timer_setup(&timer->tl, dev_expire_timer, 0);
 		spin_lock_irq(&dev->lock);
 		id = timer->id = dev->next_id++;
 		if (dev->next_id < 0)

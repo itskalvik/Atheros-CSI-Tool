@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * ISP116x HCD (Host Controller Driver) for USB.
  *
@@ -500,7 +501,8 @@ static void start_atl_transfers(struct isp116x *isp116x)
 	if (isp116x->periodic_count) {
 		isp116x->fmindex = index =
 		    (isp116x->fmindex + 1) & (PERIODIC_SIZE - 1);
-		if ((load = isp116x->load[index])) {
+		load = isp116x->load[index];
+		if (load) {
 			/* Bring all int transfers for this frame
 			   into the active queue */
 			isp116x->atl_active = last_ep =
@@ -1017,6 +1019,7 @@ static int isp116x_hub_control(struct usb_hcd *hcd,
 			spin_lock_irqsave(&isp116x->lock, flags);
 			isp116x_write_reg32(isp116x, HCRHSTATUS, RH_HS_OCIC);
 			spin_unlock_irqrestore(&isp116x->lock, flags);
+			/* fall through */
 		case C_HUB_LOCAL_POWER:
 			DBG("C_HUB_LOCAL_POWER\n");
 			break;
@@ -1432,8 +1435,10 @@ static int isp116x_bus_suspend(struct usb_hcd *hcd)
 		isp116x_write_reg32(isp116x, HCCONTROL,
 				    (val & ~HCCONTROL_HCFS) |
 				    HCCONTROL_USB_RESET);
+		/* fall through */
 	case HCCONTROL_USB_RESET:
 		ret = -EBUSY;
+		/* fall through */
 	default:		/* HCCONTROL_USB_SUSPEND */
 		spin_unlock_irqrestore(&isp116x->lock, flags);
 		break;
@@ -1510,7 +1515,7 @@ static int isp116x_bus_resume(struct usb_hcd *hcd)
 
 #endif
 
-static struct hc_driver isp116x_hc_driver = {
+static const struct hc_driver isp116x_hc_driver = {
 	.description = hcd_name,
 	.product_desc = "ISP116x Host Controller",
 	.hcd_priv_size = sizeof(struct isp116x),

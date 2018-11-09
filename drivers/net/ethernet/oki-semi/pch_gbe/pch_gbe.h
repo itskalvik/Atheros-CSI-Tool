@@ -481,7 +481,6 @@ struct pch_gbe_buffer {
 
 /**
  * struct pch_gbe_tx_ring - tx ring information
- * @tx_lock:	spinlock structs
  * @desc:	pointer to the descriptor ring memory
  * @dma:	physical address of the descriptor ring
  * @size:	length of descriptor ring in bytes
@@ -491,7 +490,6 @@ struct pch_gbe_buffer {
  * @buffer_info:	array of buffer information structs
  */
 struct pch_gbe_tx_ring {
-	spinlock_t tx_lock;
 	struct pch_gbe_tx_desc *desc;
 	dma_addr_t dma;
 	unsigned int size;
@@ -615,7 +613,6 @@ struct pch_gbe_privdata {
  * @rx_ring:		Pointer of Rx descriptor ring structure
  * @rx_buffer_len:	Receive buffer length
  * @tx_queue_len:	Transmit queue length
- * @have_msi:		PCI MSI mode flag
  * @pch_gbe_privdata:	PCI Device ID driver_data
  */
 
@@ -625,6 +622,7 @@ struct pch_gbe_adapter {
 	atomic_t irq_sem;
 	struct net_device *netdev;
 	struct pci_dev *pdev;
+	int irq;
 	struct net_device *polling_netdev;
 	struct napi_struct napi;
 	struct pch_gbe_hw hw;
@@ -639,7 +637,6 @@ struct pch_gbe_adapter {
 	struct pch_gbe_rx_ring *rx_ring;
 	unsigned long rx_buffer_len;
 	unsigned long tx_queue_len;
-	bool have_msi;
 	bool rx_stop_flag;
 	int hwts_tx_en;
 	int hwts_rx_en;

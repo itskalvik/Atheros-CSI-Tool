@@ -275,20 +275,10 @@ static struct omap_dma_dev_attr dma_dev_attr = {
 };
 
 /* dma_system */
-static struct omap_hwmod_irq_info omap54xx_dma_system_irqs[] = {
-	{ .name = "0", .irq = 12 + OMAP54XX_IRQ_GIC_START },
-	{ .name = "1", .irq = 13 + OMAP54XX_IRQ_GIC_START },
-	{ .name = "2", .irq = 14 + OMAP54XX_IRQ_GIC_START },
-	{ .name = "3", .irq = 15 + OMAP54XX_IRQ_GIC_START },
-	{ .irq = -1 }
-};
-
 static struct omap_hwmod omap54xx_dma_system_hwmod = {
 	.name		= "dma_system",
 	.class		= &omap54xx_dma_hwmod_class,
 	.clkdm_name	= "dma_clkdm",
-	.mpu_irqs	= omap54xx_dma_system_irqs,
-	.xlate_irq	= omap4_xlate_irq,
 	.main_clk	= "l3_iclk_div",
 	.prcm = {
 		.omap4 = {
@@ -839,7 +829,6 @@ static struct omap_hwmod_class_sysconfig omap54xx_i2c_sysc = {
 			   SYSC_HAS_SOFTRESET | SYSS_HAS_RESET_STATUS),
 	.idlemodes	= (SIDLE_FORCE | SIDLE_NO | SIDLE_SMART |
 			   SIDLE_SMART_WKUP),
-	.clockact	= CLOCKACT_TEST_ICLK,
 	.sysc_fields	= &omap_hwmod_sysc_type1,
 };
 
@@ -1530,7 +1519,6 @@ static struct omap_hwmod_class_sysconfig omap54xx_timer_1ms_sysc = {
 	.idlemodes	= (SIDLE_FORCE | SIDLE_NO | SIDLE_SMART |
 			   SIDLE_SMART_WKUP),
 	.sysc_fields	= &omap_hwmod_sysc_type2,
-	.clockact	= CLOCKACT_TEST_ICLK,
 };
 
 static struct omap_hwmod_class omap54xx_timer_1ms_hwmod_class = {
@@ -1748,6 +1736,7 @@ static struct omap_hwmod omap54xx_uart1_hwmod = {
 	.name		= "uart1",
 	.class		= &omap54xx_uart_hwmod_class,
 	.clkdm_name	= "l4per_clkdm",
+	.flags		= HWMOD_SWSUP_SIDLE_ACT,
 	.main_clk	= "func_48m_fclk",
 	.prcm = {
 		.omap4 = {
@@ -1763,6 +1752,7 @@ static struct omap_hwmod omap54xx_uart2_hwmod = {
 	.name		= "uart2",
 	.class		= &omap54xx_uart_hwmod_class,
 	.clkdm_name	= "l4per_clkdm",
+	.flags		= HWMOD_SWSUP_SIDLE_ACT,
 	.main_clk	= "func_48m_fclk",
 	.prcm = {
 		.omap4 = {
@@ -1778,7 +1768,7 @@ static struct omap_hwmod omap54xx_uart3_hwmod = {
 	.name		= "uart3",
 	.class		= &omap54xx_uart_hwmod_class,
 	.clkdm_name	= "l4per_clkdm",
-	.flags		= DEBUG_OMAP4UART3_FLAGS,
+	.flags		= DEBUG_OMAP4UART3_FLAGS | HWMOD_SWSUP_SIDLE_ACT,
 	.main_clk	= "func_48m_fclk",
 	.prcm = {
 		.omap4 = {
@@ -1794,7 +1784,7 @@ static struct omap_hwmod omap54xx_uart4_hwmod = {
 	.name		= "uart4",
 	.class		= &omap54xx_uart_hwmod_class,
 	.clkdm_name	= "l4per_clkdm",
-	.flags		= DEBUG_OMAP4UART4_FLAGS,
+	.flags		= DEBUG_OMAP4UART4_FLAGS | HWMOD_SWSUP_SIDLE_ACT,
 	.main_clk	= "func_48m_fclk",
 	.prcm = {
 		.omap4 = {
@@ -1810,6 +1800,7 @@ static struct omap_hwmod omap54xx_uart5_hwmod = {
 	.name		= "uart5",
 	.class		= &omap54xx_uart_hwmod_class,
 	.clkdm_name	= "l4per_clkdm",
+	.flags		= HWMOD_SWSUP_SIDLE_ACT,
 	.main_clk	= "func_48m_fclk",
 	.prcm = {
 		.omap4 = {
@@ -1825,6 +1816,7 @@ static struct omap_hwmod omap54xx_uart6_hwmod = {
 	.name		= "uart6",
 	.class		= &omap54xx_uart_hwmod_class,
 	.clkdm_name	= "l4per_clkdm",
+	.flags		= HWMOD_SWSUP_SIDLE_ACT,
 	.main_clk	= "func_48m_fclk",
 	.prcm = {
 		.omap4 = {
@@ -1844,8 +1836,7 @@ static struct omap_hwmod_class_sysconfig omap54xx_usb_host_hs_sysc = {
 	.rev_offs	= 0x0000,
 	.sysc_offs	= 0x0010,
 	.sysc_flags	= (SYSC_HAS_MIDLEMODE | SYSC_HAS_RESET_STATUS |
-			   SYSC_HAS_SIDLEMODE | SYSC_HAS_SOFTRESET |
-			   SYSC_HAS_RESET_STATUS),
+			   SYSC_HAS_SIDLEMODE | SYSC_HAS_SOFTRESET),
 	.idlemodes	= (SIDLE_FORCE | SIDLE_NO | SIDLE_SMART |
 			   SIDLE_SMART_WKUP | MSTANDBY_FORCE | MSTANDBY_NO |
 			   MSTANDBY_SMART | MSTANDBY_SMART_WKUP),
@@ -2254,21 +2245,11 @@ static struct omap_hwmod_ocp_if omap54xx_l4_wkup__counter_32k = {
 	.user		= OCP_USER_MPU | OCP_USER_SDMA,
 };
 
-static struct omap_hwmod_addr_space omap54xx_dma_system_addrs[] = {
-	{
-		.pa_start	= 0x4a056000,
-		.pa_end		= 0x4a056fff,
-		.flags		= ADDR_TYPE_RT
-	},
-	{ }
-};
-
 /* l4_cfg -> dma_system */
 static struct omap_hwmod_ocp_if omap54xx_l4_cfg__dma_system = {
 	.master		= &omap54xx_l4_cfg_hwmod,
 	.slave		= &omap54xx_dma_system_hwmod,
 	.clk		= "l4_root_clk_div",
-	.addr		= omap54xx_dma_system_addrs,
 	.user		= OCP_USER_MPU | OCP_USER_SDMA,
 };
 

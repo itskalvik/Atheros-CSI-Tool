@@ -47,7 +47,7 @@
  * The noallocl2 option suppresses all use of the L2 cache to cache
  * locally from a remote home.
  */
-static int __write_once noallocl2;
+static int __ro_after_init noallocl2;
 static int __init set_noallocl2(char *str)
 {
 	noallocl2 = 1;
@@ -409,7 +409,7 @@ void __homecache_free_pages(struct page *page, unsigned int order)
 	if (put_page_testzero(page)) {
 		homecache_change_page_home(page, order, PAGE_HOME_HASH);
 		if (order == 0) {
-			free_hot_cold_page(page, false);
+			free_unref_page(page);
 		} else {
 			init_page_count(page);
 			__free_pages(page, order);

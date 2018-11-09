@@ -13,6 +13,7 @@
 #include <linux/slab.h>
 #include <linux/bitops.h>
 #include <linux/key.h>
+#include <linux/sched/user.h>
 #include <linux/interrupt.h>
 #include <linux/export.h>
 #include <linux/user_namespace.h>
@@ -25,26 +26,32 @@
 struct user_namespace init_user_ns = {
 	.uid_map = {
 		.nr_extents = 1,
-		.extent[0] = {
-			.first = 0,
-			.lower_first = 0,
-			.count = 4294967295U,
+		{
+			.extent[0] = {
+				.first = 0,
+				.lower_first = 0,
+				.count = 4294967295U,
+			},
 		},
 	},
 	.gid_map = {
 		.nr_extents = 1,
-		.extent[0] = {
-			.first = 0,
-			.lower_first = 0,
-			.count = 4294967295U,
+		{
+			.extent[0] = {
+				.first = 0,
+				.lower_first = 0,
+				.count = 4294967295U,
+			},
 		},
 	},
 	.projid_map = {
 		.nr_extents = 1,
-		.extent[0] = {
-			.first = 0,
-			.lower_first = 0,
-			.count = 4294967295U,
+		{
+			.extent[0] = {
+				.first = 0,
+				.lower_first = 0,
+				.count = 4294967295U,
+			},
 		},
 	},
 	.count = ATOMIC_INIT(3),

@@ -271,8 +271,6 @@ static inline int max98925_rate_value(struct snd_soc_codec *codec,
 			break;
 		}
 	}
-	dev_dbg(codec->dev, "%s: sample rate is %d, returning %d\n",
-				__func__, rate_table[i].rate, *value);
 	return ret;
 }
 
@@ -432,7 +430,7 @@ static int max98925_dai_hw_params(struct snd_pcm_substream *substream,
 	struct snd_soc_codec *codec = dai->codec;
 	struct max98925_priv *max98925 = snd_soc_codec_get_drvdata(codec);
 
-	switch (snd_pcm_format_width(params_format(params))) {
+	switch (params_width(params)) {
 	case 16:
 		regmap_update_bits(max98925->regmap,
 				MAX98925_FORMAT,
@@ -523,7 +521,6 @@ static int max98925_probe(struct snd_soc_codec *codec)
 	struct max98925_priv *max98925 = snd_soc_codec_get_drvdata(codec);
 
 	max98925->codec = codec;
-	codec->control_data = max98925->regmap;
 	regmap_write(max98925->regmap, MAX98925_GLOBAL_ENABLE, 0x00);
 	/* It's not the default but we need to set DAI_DLY */
 	regmap_write(max98925->regmap,
@@ -543,12 +540,14 @@ static int max98925_probe(struct snd_soc_codec *codec)
 
 static const struct snd_soc_codec_driver soc_codec_dev_max98925 = {
 	.probe            = max98925_probe,
-	.controls = max98925_snd_controls,
-	.num_controls = ARRAY_SIZE(max98925_snd_controls),
-	.dapm_routes = max98925_audio_map,
-	.num_dapm_routes = ARRAY_SIZE(max98925_audio_map),
-	.dapm_widgets = max98925_dapm_widgets,
-	.num_dapm_widgets = ARRAY_SIZE(max98925_dapm_widgets),
+	.component_driver = {
+		.controls		= max98925_snd_controls,
+		.num_controls		= ARRAY_SIZE(max98925_snd_controls),
+		.dapm_routes		= max98925_audio_map,
+		.num_dapm_routes	= ARRAY_SIZE(max98925_audio_map),
+		.dapm_widgets		= max98925_dapm_widgets,
+		.num_dapm_widgets	= ARRAY_SIZE(max98925_dapm_widgets),
+	},
 };
 
 static const struct regmap_config max98925_regmap = {
@@ -580,7 +579,7 @@ static int max98925_i2c_probe(struct i2c_client *i2c,
 		ret = PTR_ERR(max98925->regmap);
 		dev_err(&i2c->dev,
 				"Failed to allocate regmap: %d\n", ret);
-		goto err_out;
+		return ret;
 	}
 
 	if (!of_property_read_u32(i2c->dev.of_node, "vmon-slot-no", &value)) {
@@ -597,16 +596,20 @@ static int max98925_i2c_probe(struct i2c_client *i2c,
 		}
 		max98925->i_slot = value;
 	}
-	ret = regmap_read(max98925->regmap,
-			MAX98925_REV_VERSION, &reg);
-	if ((ret < 0) ||
-		((reg != MAX98925_VERSION) &&
-		(reg != MAX98925_VERSION1))) {
-		dev_err(&i2c->dev,
-			"device initialization error (%d 0x%02X)\n",
-			ret, reg);
-		goto err_out;
+
+	ret = regmap_read(max98925->regmap, MAX98925_REV_VERSION, &reg);
+	if (ret < 0) {
+		dev_err(&i2c->dev, "Read revision failed\n");
+		return ret;
 	}
+
+	if ((reg != MAX98925_VERSION) && (reg != MAX98925_VERSION1)) {
+		ret = -ENODEV;
+		dev_err(&i2c->dev, "Invalid revision (%d 0x%02X)\n",
+			ret, reg);
+		return ret;
+	}
+
 	dev_info(&i2c->dev, "device version 0x%02X\n", reg);
 
 	ret = snd_soc_register_codec(&i2c->dev, &soc_codec_dev_max98925,
@@ -614,7 +617,6 @@ static int max98925_i2c_probe(struct i2c_client *i2c,
 	if (ret < 0)
 		dev_err(&i2c->dev,
 				"Failed to register codec: %d\n", ret);
-err_out:
 	return ret;
 }
 
@@ -639,7 +641,6 @@ MODULE_DEVICE_TABLE(of, max98925_of_match);
 static struct i2c_driver max98925_i2c_driver = {
 	.driver = {
 		.name = "max98925",
-		.owner = THIS_MODULE,
 		.of_match_table = of_match_ptr(max98925_of_match),
 		.pm = NULL,
 	},

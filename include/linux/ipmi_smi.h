@@ -115,6 +115,11 @@ struct ipmi_smi_handlers {
 	   implement it. */
 	void (*set_need_watch)(void *send_info, bool enable);
 
+	/*
+	 * Called when flushing all pending messages.
+	 */
+	void (*flush_messages)(void *send_info);
+
 	/* Called when the interface should go into "run to
 	   completion" mode.  If this call sets the value to true, the
 	   interface should make sure that all messages are flushed
@@ -157,27 +162,27 @@ struct ipmi_device_id {
 #define ipmi_version_major(v) ((v)->ipmi_version & 0xf)
 #define ipmi_version_minor(v) ((v)->ipmi_version >> 4)
 
-/* Take a pointer to a raw data buffer and a length and extract device
-   id information from it.  The first byte of data must point to the
-   netfn << 2, the data should be of the format:
-      netfn << 2, cmd, completion code, data
-   as normally comes from a device interface. */
-static inline int ipmi_demangle_device_id(const unsigned char *data,
+/* Take a pointer to an IPMI response and extract device id information from
+ * it. @netfn is in the IPMI_NETFN_ format, so may need to be shifted from
+ * a SI response.
+ */
+static inline int ipmi_demangle_device_id(uint8_t netfn, uint8_t cmd,
+					  const unsigned char *data,
 					  unsigned int data_len,
 					  struct ipmi_device_id *id)
 {
-	if (data_len < 9)
+	if (data_len < 7)
 		return -EINVAL;
-	if (data[0] != IPMI_NETFN_APP_RESPONSE << 2 ||
-	    data[1] != IPMI_GET_DEVICE_ID_CMD)
+	if (netfn != IPMI_NETFN_APP_RESPONSE || cmd != IPMI_GET_DEVICE_ID_CMD)
 		/* Strange, didn't get the response we expected. */
 		return -EINVAL;
-	if (data[2] != 0)
+	if (data[0] != 0)
 		/* That's odd, it shouldn't be able to fail. */
 		return -EINVAL;
 
-	data += 3;
-	data_len -= 3;
+	data++;
+	data_len--;
+
 	id->device_id = data[0];
 	id->device_revision = data[1];
 	id->firmware_revision_1 = data[2];
@@ -207,9 +212,8 @@ static inline int ipmi_demangle_device_id(const unsigned char *data,
    upper layer until the start_processing() function in the handlers
    is called, and the lower layer must get the interface from that
    call. */
-int ipmi_register_smi(struct ipmi_smi_handlers *handlers,
+int ipmi_register_smi(const struct ipmi_smi_handlers *handlers,
 		      void                     *send_info,
-		      struct ipmi_device_id    *device_id,
 		      struct device            *dev,
 		      unsigned char            slave_addr);
 
@@ -237,11 +241,13 @@ static inline void ipmi_free_smi_msg(struct ipmi_smi_msg *msg)
 	msg->done(msg);
 }
 
+#ifdef CONFIG_IPMI_PROC_INTERFACE
 /* Allow the lower layer to add things to the proc filesystem
    directory for this interface.  Note that the entry will
    automatically be dstroyed when the interface is destroyed. */
 int ipmi_smi_add_proc_entry(ipmi_smi_t smi, char *name,
 			    const struct file_operations *proc_ops,
 			    void *data);
+#endif
 
 #endif /* __LINUX_IPMI_SMI_H */

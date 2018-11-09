@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * IBM/3270 Driver - fullscreen driver.
  *
@@ -12,6 +13,7 @@
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/compat.h>
+#include <linux/sched/signal.h>
 #include <linux/module.h>
 #include <linux/list.h>
 #include <linux/slab.h>
@@ -217,7 +219,7 @@ fs3270_deactivate(struct raw3270_view *view)
 		fp->init->callback(fp->init, NULL);
 }
 
-static int
+static void
 fs3270_irq(struct fs3270 *fp, struct raw3270_request *rq, struct irb *irb)
 {
 	/* Handle ATTN. Set indication and wake waiters for attention. */
@@ -233,7 +235,6 @@ fs3270_irq(struct fs3270 *fp, struct raw3270_request *rq, struct irb *irb)
 			/* Normal end. Copy residual count. */
 			rq->rescnt = irb->scsw.cmd.count;
 	}
-	return RAW3270_IO_DONE;
 }
 
 /*

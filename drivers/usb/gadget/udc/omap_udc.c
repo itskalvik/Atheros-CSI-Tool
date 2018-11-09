@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * omap_udc.c -- for OMAP full speed udc; most chips support OTG.
  *
@@ -5,11 +6,6 @@
  * Copyright (C) 2004-2005 David Brownell
  *
  * OMAP2 & DMA support by Kyungmin Park <kyungmin.park@samsung.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
  */
 
 #undef	DEBUG
@@ -1112,7 +1108,7 @@ done:
 	return status;
 }
 
-static struct usb_ep_ops omap_ep_ops = {
+static const struct usb_ep_ops omap_ep_ops = {
 	.enable		= omap_ep_enable,
 	.disable	= omap_ep_disable,
 
@@ -1858,9 +1854,9 @@ static irqreturn_t omap_udc_irq(int irq, void *_udc)
 #define PIO_OUT_TIMEOUT	(jiffies + HZ/3)
 #define HALF_FULL(f)	(!((f)&(UDC_NON_ISO_FIFO_FULL|UDC_NON_ISO_FIFO_EMPTY)))
 
-static void pio_out_timer(unsigned long _ep)
+static void pio_out_timer(struct timer_list *t)
 {
-	struct omap_ep	*ep = (void *) _ep;
+	struct omap_ep	*ep = from_timer(ep, t, timer);
 	unsigned long	flags;
 	u16		stat_flg;
 
@@ -2546,9 +2542,7 @@ omap_ep_setup(char *name, u8 addr, u8 type,
 		}
 		if (dbuf && addr)
 			epn_rxtx |= UDC_EPN_RX_DB;
-		init_timer(&ep->timer);
-		ep->timer.function = pio_out_timer;
-		ep->timer.data = (unsigned long) ep;
+		timer_setup(&ep->timer, pio_out_timer, 0);
 	}
 	if (addr)
 		epn_rxtx |= UDC_EPN_RX_VALID;
@@ -2578,6 +2572,28 @@ omap_ep_setup(char *name, u8 addr, u8 type,
 	ep->bmAttributes = type;
 	ep->double_buf = dbuf;
 	ep->udc = udc;
+
+	switch (type) {
+	case USB_ENDPOINT_XFER_CONTROL:
+		ep->ep.caps.type_control = true;
+		ep->ep.caps.dir_in = true;
+		ep->ep.caps.dir_out = true;
+		break;
+	case USB_ENDPOINT_XFER_ISOC:
+		ep->ep.caps.type_iso = true;
+		break;
+	case USB_ENDPOINT_XFER_BULK:
+		ep->ep.caps.type_bulk = true;
+		break;
+	case USB_ENDPOINT_XFER_INT:
+		ep->ep.caps.type_int = true;
+		break;
+	};
+
+	if (addr & USB_DIR_IN)
+		ep->ep.caps.dir_in = true;
+	else
+		ep->ep.caps.dir_out = true;
 
 	ep->ep.name = ep->name;
 	ep->ep.ops = &omap_ep_ops;
@@ -2853,7 +2869,7 @@ bad_on_1710:
 	xceiv = NULL;
 	/* "udc" is now valid */
 	pullup_disable(udc);
-#if	defined(CONFIG_USB_OHCI_HCD) || defined(CONFIG_USB_OHCI_HCD_MODULE)
+#if	IS_ENABLED(CONFIG_USB_OHCI_HCD)
 	udc->gadget.is_otg = (config->otg != 0);
 #endif
 

@@ -92,37 +92,37 @@
 #define DAS16_AO_LSB_REG(x)		((x) ? 0x06 : 0x04)
 #define DAS16_AO_MSB_REG(x)		((x) ? 0x07 : 0x05)
 #define DAS16_STATUS_REG		0x08
-#define DAS16_STATUS_BUSY		(1 << 7)
-#define DAS16_STATUS_UNIPOLAR		(1 << 6)
-#define DAS16_STATUS_MUXBIT		(1 << 5)
-#define DAS16_STATUS_INT		(1 << 4)
+#define DAS16_STATUS_BUSY		BIT(7)
+#define DAS16_STATUS_UNIPOLAR		BIT(6)
+#define DAS16_STATUS_MUXBIT		BIT(5)
+#define DAS16_STATUS_INT		BIT(4)
 #define DAS16_CTRL_REG			0x09
-#define DAS16_CTRL_INTE			(1 << 7)
+#define DAS16_CTRL_INTE			BIT(7)
 #define DAS16_CTRL_IRQ(x)		(((x) & 0x7) << 4)
-#define DAS16_CTRL_DMAE			(1 << 2)
+#define DAS16_CTRL_DMAE			BIT(2)
 #define DAS16_CTRL_PACING_MASK		(3 << 0)
 #define DAS16_CTRL_INT_PACER		(3 << 0)
 #define DAS16_CTRL_EXT_PACER		(2 << 0)
 #define DAS16_CTRL_SOFT_PACER		(0 << 0)
 #define DAS16_PACER_REG			0x0a
 #define DAS16_PACER_BURST_LEN(x)	(((x) & 0xf) << 4)
-#define DAS16_PACER_CTR0		(1 << 1)
-#define DAS16_PACER_TRIG0		(1 << 0)
+#define DAS16_PACER_CTR0		BIT(1)
+#define DAS16_PACER_TRIG0		BIT(0)
 #define DAS16_GAIN_REG			0x0b
 #define DAS16_TIMER_BASE_REG		0x0c	/* to 0x0f */
 
 #define DAS1600_CONV_REG		0x404
-#define DAS1600_CONV_DISABLE		(1 << 6)
+#define DAS1600_CONV_DISABLE		BIT(6)
 #define DAS1600_BURST_REG		0x405
-#define DAS1600_BURST_VAL		(1 << 6)
+#define DAS1600_BURST_VAL		BIT(6)
 #define DAS1600_ENABLE_REG		0x406
-#define DAS1600_ENABLE_VAL		(1 << 6)
+#define DAS1600_ENABLE_VAL		BIT(6)
 #define DAS1600_STATUS_REG		0x407
-#define DAS1600_STATUS_BME		(1 << 6)
-#define DAS1600_STATUS_ME		(1 << 5)
-#define DAS1600_STATUS_CD		(1 << 4)
-#define DAS1600_STATUS_WS		(1 << 1)
-#define DAS1600_STATUS_CLK_10MHZ	(1 << 0)
+#define DAS1600_STATUS_BME		BIT(6)
+#define DAS1600_STATUS_ME		BIT(5)
+#define DAS1600_STATUS_CD		BIT(4)
+#define DAS1600_STATUS_WS		BIT(1)
+#define DAS1600_STATUS_CLK_10MHZ	BIT(0)
 
 static const struct comedi_lrange range_das1x01_bip = {
 	4, {
@@ -198,6 +198,7 @@ enum {
 	das16_pg_1601,
 	das16_pg_1602,
 };
+
 static const int *const das16_gainlists[] = {
 	NULL,
 	das16jr_gainlist,
@@ -428,8 +429,10 @@ static const struct das16_board das16_boards[] = {
 	},
 };
 
-/* Period for timer interrupt in jiffies.  It's a function
- * to deal with possibility of dynamic HZ patches  */
+/*
+ * Period for timer interrupt in jiffies.  It's a function
+ * to deal with possibility of dynamic HZ patches
+ */
 static inline int timer_period(void)
 {
 	return HZ / 20;
@@ -437,6 +440,7 @@ static inline int timer_period(void)
 
 struct das16_private_struct {
 	struct comedi_isadma	*dma;
+	struct comedi_device	*dev;
 	unsigned int		clockbase;
 	unsigned int		ctrl_reg;
 	unsigned int		divisor1;
@@ -522,10 +526,10 @@ static void das16_interrupt(struct comedi_device *dev)
 	comedi_handle_events(dev, s);
 }
 
-static void das16_timer_interrupt(unsigned long arg)
+static void das16_timer_interrupt(struct timer_list *t)
 {
-	struct comedi_device *dev = (struct comedi_device *)arg;
-	struct das16_private_struct *devpriv = dev->private;
+	struct das16_private_struct *devpriv = from_timer(devpriv, t, timer);
+	struct comedi_device *dev = devpriv->dev;
 	unsigned long flags;
 
 	das16_interrupt(dev);
@@ -801,9 +805,10 @@ static void das16_ai_munge(struct comedi_device *dev,
 	unsigned short *data = array;
 	unsigned int num_samples = comedi_bytes_to_samples(s, num_bytes);
 	unsigned int i;
+	__le16 *buf = array;
 
 	for (i = 0; i < num_samples; i++) {
-		data[i] = le16_to_cpu(data[i]);
+		data[i] = le16_to_cpu(buf[i]);
 		if (s->maxdata == 0x0fff)
 			data[i] >>= 4;
 		data[i] &= s->maxdata;
@@ -930,6 +935,8 @@ static void das16_alloc_dma(struct comedi_device *dev, unsigned int dma_chan)
 {
 	struct das16_private_struct *devpriv = dev->private;
 
+	timer_setup(&devpriv->timer, das16_timer_interrupt, 0);
+
 	/* only DMA channels 3 and 1 are valid */
 	if (!(dma_chan == 1 || dma_chan == 3))
 		return;
@@ -937,10 +944,6 @@ static void das16_alloc_dma(struct comedi_device *dev, unsigned int dma_chan)
 	/* DMA uses two buffers */
 	devpriv->dma = comedi_isadma_alloc(dev, 2, dma_chan, dma_chan,
 					   DAS16_DMA_SIZE, COMEDI_ISADMA_READ);
-	if (devpriv->dma) {
-		setup_timer(&devpriv->timer, das16_timer_interrupt,
-			    (unsigned long)dev);
-	}
 }
 
 static void das16_free_dma(struct comedi_device *dev)
@@ -948,8 +951,7 @@ static void das16_free_dma(struct comedi_device *dev)
 	struct das16_private_struct *devpriv = dev->private;
 
 	if (devpriv) {
-		if (devpriv->timer.data)
-			del_timer_sync(&devpriv->timer);
+		del_timer_sync(&devpriv->timer);
 		comedi_isadma_free(devpriv->dma);
 	}
 }
@@ -1032,8 +1034,7 @@ static int das16_attach(struct comedi_device *dev, struct comedi_devconfig *it)
 
 	/*  check that clock setting is valid */
 	if (it->options[3]) {
-		if (it->options[3] != 0 &&
-		    it->options[3] != 1 && it->options[3] != 10) {
+		if (it->options[3] != 1 && it->options[3] != 10) {
 			dev_err(dev->class_dev,
 				"Invalid option. Master clock must be set to 1 or 10 (MHz)\n");
 			return -EINVAL;
@@ -1043,6 +1044,7 @@ static int das16_attach(struct comedi_device *dev, struct comedi_devconfig *it)
 	devpriv = comedi_alloc_devpriv(dev, sizeof(*devpriv));
 	if (!devpriv)
 		return -ENOMEM;
+	devpriv->dev = dev;
 
 	if (board->size < 0x400) {
 		ret = comedi_request_region(dev, it->options[0], board->size);

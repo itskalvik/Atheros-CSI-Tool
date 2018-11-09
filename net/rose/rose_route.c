@@ -25,13 +25,12 @@
 #include <linux/skbuff.h>
 #include <net/sock.h>
 #include <net/tcp_states.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #include <linux/fcntl.h>
 #include <linux/termios.h>	/* For TIOCINQ/OUTQ */
 #include <linux/mm.h>
 #include <linux/interrupt.h>
 #include <linux/notifier.h>
-#include <linux/netfilter.h>
 #include <linux/init.h>
 #include <net/rose.h>
 #include <linux/seq_file.h>
@@ -105,8 +104,8 @@ static int __must_check rose_add_node(struct rose_route_struct *rose_route,
 
 		skb_queue_head_init(&rose_neigh->queue);
 
-		init_timer(&rose_neigh->ftimer);
-		init_timer(&rose_neigh->t0timer);
+		timer_setup(&rose_neigh->ftimer, NULL, 0);
+		timer_setup(&rose_neigh->t0timer, NULL, 0);
 
 		if (rose_route->ndigis != 0) {
 			rose_neigh->digipeat =
@@ -347,6 +346,7 @@ static int rose_del_node(struct rose_route_struct *rose_route,
 				case 0:
 					rose_node->neighbour[0] =
 						rose_node->neighbour[1];
+					/* fall through */
 				case 1:
 					rose_node->neighbour[1] =
 						rose_node->neighbour[2];
@@ -391,8 +391,8 @@ void rose_add_loopback_neigh(void)
 
 	skb_queue_head_init(&sn->queue);
 
-	init_timer(&sn->ftimer);
-	init_timer(&sn->t0timer);
+	timer_setup(&sn->ftimer, NULL, 0);
+	timer_setup(&sn->t0timer, NULL, 0);
 
 	spin_lock_bh(&rose_neigh_list_lock);
 	sn->next = rose_neigh_list;
@@ -508,6 +508,7 @@ void rose_rt_device_down(struct net_device *dev)
 				switch (i) {
 				case 0:
 					t->neighbour[0] = t->neighbour[1];
+					/* fall through */
 				case 1:
 					t->neighbour[1] = t->neighbour[2];
 				case 2:

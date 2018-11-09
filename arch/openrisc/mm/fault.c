@@ -17,10 +17,10 @@
 
 #include <linux/mm.h>
 #include <linux/interrupt.h>
-#include <linux/module.h>
-#include <linux/sched.h>
+#include <linux/extable.h>
+#include <linux/sched/signal.h>
 
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #include <asm/siginfo.h>
 #include <asm/signal.h>
 
@@ -33,7 +33,7 @@ unsigned long pte_errors;	/* updated by do_page_fault() */
 /* __PHX__ :: - check the vmalloc_fault in do_page_fault()
  *            - also look into include/asm-or32/mmu_context.h
  */
-volatile pgd_t *current_pgd;
+volatile pgd_t *current_pgd[NR_CPUS];
 
 extern void die(char *, struct pt_regs *, long);
 
@@ -163,7 +163,7 @@ good_area:
 	 * the fault.
 	 */
 
-	fault = handle_mm_fault(mm, vma, address, flags);
+	fault = handle_mm_fault(vma, address, flags);
 
 	if ((fault & VM_FAULT_RETRY) && fatal_signal_pending(current))
 		return;
@@ -319,7 +319,7 @@ vmalloc_fault:
 
 		phx_mmu("vmalloc_fault");
 */
-		pgd = (pgd_t *)current_pgd + offset;
+		pgd = (pgd_t *)current_pgd[smp_processor_id()] + offset;
 		pgd_k = init_mm.pgd + offset;
 
 		/* Since we're two-level, we don't need to do both

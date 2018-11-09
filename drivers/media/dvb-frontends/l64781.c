@@ -243,9 +243,9 @@ static int apply_frontend_param(struct dvb_frontend *fe)
 	return 0;
 }
 
-static int get_frontend(struct dvb_frontend *fe)
+static int get_frontend(struct dvb_frontend *fe,
+			struct dtv_frontend_properties *p)
 {
-	struct dtv_frontend_properties *p = &fe->dtv_property_cache;
 	struct l64781_state* state = fe->demodulator_priv;
 	int tmp;
 
@@ -359,7 +359,7 @@ static int get_frontend(struct dvb_frontend *fe)
 	return 0;
 }
 
-static int l64781_read_status(struct dvb_frontend* fe, fe_status_t* status)
+static int l64781_read_status(struct dvb_frontend *fe, enum fe_status *status)
 {
 	struct l64781_state* state = fe->demodulator_priv;
 	int sync = l64781_readreg (state, 0x32);
@@ -496,7 +496,7 @@ static void l64781_release(struct dvb_frontend* fe)
 	kfree(state);
 }
 
-static struct dvb_frontend_ops l64781_ops;
+static const struct dvb_frontend_ops l64781_ops;
 
 struct dvb_frontend* l64781_attach(const struct l64781_config* config,
 				   struct i2c_adapter* i2c)
@@ -517,7 +517,7 @@ struct dvb_frontend* l64781_attach(const struct l64781_config* config,
 	state->i2c = i2c;
 	state->first = 1;
 
-	/**
+	/*
 	 *  the L64781 won't show up before we send the reset_and_configure()
 	 *  broadcast. If nothing responds there is no L64781 on the bus...
 	 */
@@ -571,7 +571,7 @@ error:
 	return NULL;
 }
 
-static struct dvb_frontend_ops l64781_ops = {
+static const struct dvb_frontend_ops l64781_ops = {
 	.delsys = { SYS_DVBT },
 	.info = {
 		.name = "LSI L64781 DVB-T",

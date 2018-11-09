@@ -16,6 +16,7 @@
 #include <linux/interrupt.h>
 #include <linux/gpio.h>
 #include <linux/delay.h>
+#include <linux/gpio/machine.h>
 #include <asm/dma.h>
 #include <asm/bfin5xx_spi.h>
 #include <asm/portmux.h>
@@ -134,7 +135,8 @@ static struct platform_device net2272_bfin_device = {
 #include <linux/smc91x.h>
 
 static struct smc91x_platdata smc91x_info = {
-	.flags = SMC91X_USE_32BIT | SMC91X_NOWAIT,
+	.flags = SMC91X_USE_8BIT | SMC91X_USE_16BIT | SMC91X_USE_32BIT |
+		 SMC91X_NOWAIT,
 	.leda = RPC_LED_100_10,
 	.ledb = RPC_LED_TX_RX,
 };
@@ -378,11 +380,17 @@ static struct platform_device bfin_device_gpiokeys = {
 #if IS_ENABLED(CONFIG_I2C_GPIO)
 #include <linux/i2c-gpio.h>
 
+static struct gpiod_lookup_table bfin_i2c_gpiod_table = {
+	.dev_id = "i2c-gpio",
+	.table = {
+		GPIO_LOOKUP_IDX("BFIN-GPIO", GPIO_PF1, NULL, 0,
+				GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN),
+		GPIO_LOOKUP_IDX("BFIN-GPIO", GPIO_PF0, NULL, 1,
+				GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN),
+	},
+};
+
 static struct i2c_gpio_platform_data i2c_gpio_data = {
-	.sda_pin		= GPIO_PF1,
-	.scl_pin		= GPIO_PF0,
-	.sda_is_open_drain	= 0,
-	.scl_is_open_drain	= 0,
 	.udelay			= 10,
 };
 
@@ -443,7 +451,7 @@ static const struct ppi_info ppi_info = {
 };
 
 #if IS_ENABLED(CONFIG_VIDEO_ADV7183)
-#include <media/adv7183.h>
+#include <media/i2c/adv7183.h>
 static struct v4l2_input adv7183_inputs[] = {
 	{
 		.index = 0,
@@ -632,6 +640,9 @@ static int __init ezkit_init(void)
 
 	printk(KERN_INFO "%s(): registering device resources\n", __func__);
 
+#if IS_ENABLED(CONFIG_I2C_GPIO)
+	gpiod_add_lookup_table(&bfin_i2c_gpiod_table);
+#endif
 	ret = platform_add_devices(ezkit_devices, ARRAY_SIZE(ezkit_devices));
 	if (ret < 0)
 		return ret;

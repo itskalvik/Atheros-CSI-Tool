@@ -66,7 +66,8 @@ struct sas_task *sas_alloc_slow_task(gfp_t flags)
 	}
 
 	task->slow_task = slow;
-	init_timer(&slow->timer);
+	slow->task = task;
+	timer_setup(&slow->timer, NULL, 0);
 	init_completion(&slow->completion);
 
 	return task;
@@ -106,17 +107,6 @@ void sas_hash_addr(u8 *hashed, const u8 *sas_addr)
         hashed[2] = r & 0xFF;
 }
 
-
-/* ---------- HA events ---------- */
-
-void sas_hae_reset(struct work_struct *work)
-{
-	struct sas_ha_event *ev = to_sas_ha_event(work);
-	struct sas_ha_struct *ha = ev->ha;
-
-	clear_bit(HAE_RESET, &ha->pending);
-}
-
 int sas_register_ha(struct sas_ha_struct *sas_ha)
 {
 	int error = 0;
@@ -154,7 +144,6 @@ int sas_register_ha(struct sas_ha_struct *sas_ha)
 	INIT_LIST_HEAD(&sas_ha->eh_ata_q);
 
 	return 0;
-
 Undo_ports:
 	sas_unregister_ports(sas_ha);
 Undo_phys:
@@ -560,19 +549,11 @@ sas_domain_attach_transport(struct sas_domain_function_template *dft)
 	i = to_sas_internal(stt);
 	i->dft = dft;
 	stt->create_work_queue = 1;
-	stt->eh_timed_out = sas_scsi_timed_out;
 	stt->eh_strategy_handler = sas_scsi_recover_host;
 
 	return stt;
 }
 EXPORT_SYMBOL_GPL(sas_domain_attach_transport);
-
-
-void sas_domain_release_transport(struct scsi_transport_template *stt)
-{
-	sas_release_transport(stt);
-}
-EXPORT_SYMBOL_GPL(sas_domain_release_transport);
 
 /* ---------- SAS Class register/unregister ---------- */
 

@@ -15,7 +15,7 @@
  * See "Documentation/ABI/testing/sysfs-class-net-grcan" for information on the
  * sysfs interface.
  *
- * See "Documentation/kernel-parameters.txt" for information on the module
+ * See "Documentation/admin-guide/kernel-parameters.rst" for information on the module
  * parameters.
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -807,10 +807,10 @@ static irqreturn_t grcan_interrupt(int irq, void *dev_id)
  * is not ONGOING (TX might be stuck in ONGOING due to a harwrware bug
  * for single shot)
  */
-static void grcan_running_reset(unsigned long data)
+static void grcan_running_reset(struct timer_list *t)
 {
-	struct net_device *dev = (struct net_device *)data;
-	struct grcan_priv *priv = netdev_priv(dev);
+	struct grcan_priv *priv = from_timer(priv, t, rr_timer);
+	struct net_device *dev = priv->dev;
 	struct grcan_registers __iomem *regs = priv->regs;
 	unsigned long flags;
 
@@ -898,10 +898,10 @@ static inline void grcan_reset_timer(struct timer_list *timer, __u32 bitrate)
 }
 
 /* Disable channels and schedule a running reset */
-static void grcan_initiate_running_reset(unsigned long data)
+static void grcan_initiate_running_reset(struct timer_list *t)
 {
-	struct net_device *dev = (struct net_device *)data;
-	struct grcan_priv *priv = netdev_priv(dev);
+	struct grcan_priv *priv = from_timer(priv, t, hang_timer);
+	struct net_device *dev = priv->dev;
 	struct grcan_registers __iomem *regs = priv->regs;
 	unsigned long flags;
 
@@ -1216,11 +1216,12 @@ static int grcan_receive(struct net_device *dev, int budget)
 				cf->data[i] = (u8)(slot[j] >> shift);
 			}
 		}
-		netif_receive_skb(skb);
 
 		/* Update statistics and read pointer */
 		stats->rx_packets++;
 		stats->rx_bytes += cf->can_dlc;
+		netif_receive_skb(skb);
+
 		rd = grcan_ring_add(rd, GRCAN_MSG_SIZE, dma->rx.size);
 	}
 
@@ -1625,13 +1626,8 @@ static int grcan_setup_netdev(struct platform_device *ofdev,
 	spin_lock_init(&priv->lock);
 
 	if (priv->need_txbug_workaround) {
-		init_timer(&priv->rr_timer);
-		priv->rr_timer.function = grcan_running_reset;
-		priv->rr_timer.data = (unsigned long)dev;
-
-		init_timer(&priv->hang_timer);
-		priv->hang_timer.function = grcan_initiate_running_reset;
-		priv->hang_timer.data = (unsigned long)dev;
+		timer_setup(&priv->rr_timer, grcan_running_reset, 0);
+		timer_setup(&priv->hang_timer, grcan_initiate_running_reset, 0);
 	}
 
 	netif_napi_add(dev, &priv->napi, grcan_poll, GRCAN_NAPI_WEIGHT);

@@ -22,7 +22,7 @@
 
 #define PREALLOC_DMA_DEBUG_ENTRIES	4096
 
-struct dma_map_ops *dma_ops;
+const struct dma_map_ops *dma_ops;
 EXPORT_SYMBOL(dma_ops);
 
 static int __init dma_init(void)
@@ -34,7 +34,7 @@ fs_initcall(dma_init);
 
 void *dma_generic_alloc_coherent(struct device *dev, size_t size,
 				 dma_addr_t *dma_handle, gfp_t gfp,
-				 struct dma_attrs *attrs)
+				 unsigned long attrs)
 {
 	void *ret, *ret_nocache;
 	int order = get_order(size);
@@ -49,7 +49,7 @@ void *dma_generic_alloc_coherent(struct device *dev, size_t size,
 	 * Pages from the page allocator may have data present in
 	 * cache. So flush the cache before using uncached memory.
 	 */
-	dma_cache_sync(dev, ret, size, DMA_BIDIRECTIONAL);
+	sh_sync_dma_for_device(ret, size, DMA_BIDIRECTIONAL);
 
 	ret_nocache = (void __force *)ioremap_nocache(virt_to_phys(ret), size);
 	if (!ret_nocache) {
@@ -66,7 +66,7 @@ void *dma_generic_alloc_coherent(struct device *dev, size_t size,
 
 void dma_generic_free_coherent(struct device *dev, size_t size,
 			       void *vaddr, dma_addr_t dma_handle,
-			       struct dma_attrs *attrs)
+			       unsigned long attrs)
 {
 	int order = get_order(size);
 	unsigned long pfn = dma_handle >> PAGE_SHIFT;
@@ -78,7 +78,7 @@ void dma_generic_free_coherent(struct device *dev, size_t size,
 	iounmap(vaddr);
 }
 
-void dma_cache_sync(struct device *dev, void *vaddr, size_t size,
+void sh_sync_dma_for_device(void *vaddr, size_t size,
 		    enum dma_data_direction direction)
 {
 	void *addr;
@@ -100,7 +100,7 @@ void dma_cache_sync(struct device *dev, void *vaddr, size_t size,
 		BUG();
 	}
 }
-EXPORT_SYMBOL(dma_cache_sync);
+EXPORT_SYMBOL(sh_sync_dma_for_device);
 
 static int __init memchunk_setup(char *str)
 {

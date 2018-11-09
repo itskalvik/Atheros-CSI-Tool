@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _ASM_HIGHMEM_H
 #define _ASM_HIGHMEM_H
 
@@ -18,7 +19,6 @@
 	} while (0)
 
 extern pte_t *pkmap_page_table;
-extern pte_t *fixmap_page_table;
 
 extern void *kmap_high(struct page *page);
 extern void kunmap_high(struct page *page);
@@ -68,7 +68,6 @@ extern void kunmap(struct page *page);
 extern void *kmap_atomic(struct page *page);
 extern void __kunmap_atomic(void *kvaddr);
 extern void *kmap_atomic_pfn(unsigned long pfn);
-extern struct page *kmap_atomic_to_page(const void *ptr);
 #endif
 
 #endif

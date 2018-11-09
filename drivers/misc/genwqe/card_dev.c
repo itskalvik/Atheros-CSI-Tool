@@ -29,7 +29,7 @@
 #include <linux/pci.h>
 #include <linux/string.h>
 #include <linux/fs.h>
-#include <linux/sched.h>
+#include <linux/sched/signal.h>
 #include <linux/wait.h>
 #include <linux/delay.h>
 #include <linux/atomic.h>
@@ -418,7 +418,7 @@ static void genwqe_vma_close(struct vm_area_struct *vma)
 	kfree(dma_map);
 }
 
-static struct vm_operations_struct genwqe_vma_ops = {
+static const struct vm_operations_struct genwqe_vma_ops = {
 	.open   = genwqe_vma_open,
 	.close  = genwqe_vma_close,
 };
@@ -449,7 +449,7 @@ static int genwqe_mmap(struct file *filp, struct vm_area_struct *vma)
 	if (get_order(vsize) > MAX_ORDER)
 		return -ENOMEM;
 
-	dma_map = kzalloc(sizeof(struct dma_mapping), GFP_ATOMIC);
+	dma_map = kzalloc(sizeof(struct dma_mapping), GFP_KERNEL);
 	if (dma_map == NULL)
 		return -ENOMEM;
 
@@ -785,7 +785,7 @@ static int genwqe_pin_mem(struct genwqe_file *cfile, struct genwqe_mem *m)
 	map_addr = (m->addr & PAGE_MASK);
 	map_size = round_up(m->size + (m->addr & ~PAGE_MASK), PAGE_SIZE);
 
-	dma_map = kzalloc(sizeof(struct dma_mapping), GFP_ATOMIC);
+	dma_map = kzalloc(sizeof(struct dma_mapping), GFP_KERNEL);
 	if (dma_map == NULL)
 		return -ENOMEM;
 
@@ -942,6 +942,10 @@ static int ddcb_cmd_fixups(struct genwqe_file *cfile, struct ddcb_requ *req)
 
 				genwqe_mapping_init(m,
 						    GENWQE_MAPPING_SGL_TEMP);
+
+				if (ats_flags == ATS_TYPE_SGL_RD)
+					m->write = 0;
+
 				rc = genwqe_user_vmap(cd, m, (void *)u_addr,
 						      u_size, req);
 				if (rc != 0)
@@ -954,7 +958,7 @@ static int ddcb_cmd_fixups(struct genwqe_file *cfile, struct ddcb_requ *req)
 			/* create genwqe style scatter gather list */
 			rc = genwqe_alloc_sync_sgl(cd, &req->sgls[i],
 						   (void __user *)u_addr,
-						   u_size);
+						   u_size, m->write);
 			if (rc != 0)
 				goto err_out;
 
@@ -1396,7 +1400,7 @@ int genwqe_device_remove(struct genwqe_dev *cd)
 	 * application which will decrease this reference from
 	 * 1/unused to 0/illegal and not from 2/used 1/empty.
 	 */
-	rc = atomic_read(&cd->cdev_genwqe.kobj.kref.refcount);
+	rc = kref_read(&cd->cdev_genwqe.kobj.kref);
 	if (rc != 1) {
 		dev_err(&pci_dev->dev,
 			"[%s] err: cdev_genwqe...refcount=%d\n", __func__, rc);

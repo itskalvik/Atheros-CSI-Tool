@@ -1,13 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * bcm63xx_udc.c -- BCM63xx UDC high/full speed USB device controller
  *
  * Copyright (C) 2012 Kevin Cernekee <cernekee@gmail.com>
  * Copyright (C) 2012 Broadcom Corporation
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
  */
 
 #include <linux/bitops.h>
@@ -21,7 +17,6 @@
 #include <linux/errno.h>
 #include <linux/interrupt.h>
 #include <linux/ioport.h>
-#include <linux/kconfig.h>
 #include <linux/kernel.h>
 #include <linux/list.h>
 #include <linux/module.h>
@@ -44,9 +39,29 @@
 #define DRV_MODULE_NAME		"bcm63xx_udc"
 
 static const char bcm63xx_ep0name[] = "ep0";
-static const char *const bcm63xx_ep_name[] = {
-	bcm63xx_ep0name,
-	"ep1in-bulk", "ep2out-bulk", "ep3in-int", "ep4out-int",
+
+static const struct {
+	const char *name;
+	const struct usb_ep_caps caps;
+} bcm63xx_ep_info[] = {
+#define EP_INFO(_name, _caps) \
+	{ \
+		.name = _name, \
+		.caps = _caps, \
+	}
+
+	EP_INFO(bcm63xx_ep0name,
+		USB_EP_CAPS(USB_EP_CAPS_TYPE_CONTROL, USB_EP_CAPS_DIR_ALL)),
+	EP_INFO("ep1in-bulk",
+		USB_EP_CAPS(USB_EP_CAPS_TYPE_BULK, USB_EP_CAPS_DIR_IN)),
+	EP_INFO("ep2out-bulk",
+		USB_EP_CAPS(USB_EP_CAPS_TYPE_BULK, USB_EP_CAPS_DIR_OUT)),
+	EP_INFO("ep3in-int",
+		USB_EP_CAPS(USB_EP_CAPS_TYPE_INT, USB_EP_CAPS_DIR_IN)),
+	EP_INFO("ep4out-int",
+		USB_EP_CAPS(USB_EP_CAPS_TYPE_INT, USB_EP_CAPS_DIR_OUT)),
+
+#undef EP_INFO
 };
 
 static bool use_fullspeed;
@@ -943,7 +958,8 @@ static int bcm63xx_init_udc_hw(struct bcm63xx_udc *udc)
 	for (i = 0; i < BCM63XX_NUM_EP; i++) {
 		struct bcm63xx_ep *bep = &udc->bep[i];
 
-		bep->ep.name = bcm63xx_ep_name[i];
+		bep->ep.name = bcm63xx_ep_info[i].name;
+		bep->ep.caps = bcm63xx_ep_info[i].caps;
 		bep->ep_num = i;
 		bep->ep.ops = &bcm63xx_udc_ep_ops;
 		list_add_tail(&bep->ep.ep_list, &udc->gadget.ep_list);
@@ -1062,7 +1078,7 @@ static int bcm63xx_ep_disable(struct usb_ep *ep)
 	struct bcm63xx_ep *bep = our_ep(ep);
 	struct bcm63xx_udc *udc = bep->udc;
 	struct iudma_ch *iudma = bep->iudma;
-	struct list_head *pos, *n;
+	struct bcm63xx_req *breq, *n;
 	unsigned long flags;
 
 	if (!ep || !ep->desc)
@@ -1078,10 +1094,7 @@ static int bcm63xx_ep_disable(struct usb_ep *ep)
 	iudma_reset_channel(udc, iudma);
 
 	if (!list_empty(&bep->queue)) {
-		list_for_each_safe(pos, n, &bep->queue) {
-			struct bcm63xx_req *breq =
-				list_entry(pos, struct bcm63xx_req, queue);
-
+		list_for_each_entry_safe(breq, n, &bep->queue, queue) {
 			usb_gadget_unmap_request(&udc->gadget, &breq->req,
 						 iudma->is_tx);
 			list_del(&breq->queue);

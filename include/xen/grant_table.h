@@ -45,8 +45,10 @@
 #include <asm/xen/hypervisor.h>
 
 #include <xen/features.h>
+#include <xen/page.h>
 #include <linux/mm_types.h>
 #include <linux/page-flags.h>
+#include <linux/kernel.h>
 
 #define GNTTAB_RESERVED_XENSTORE 1
 
@@ -129,6 +131,15 @@ void gnttab_cancel_free_callback(struct gnttab_free_callback *callback);
 void gnttab_grant_foreign_access_ref(grant_ref_t ref, domid_t domid,
 				     unsigned long frame, int readonly);
 
+/* Give access to the first 4K of the page */
+static inline void gnttab_page_grant_foreign_access_ref_one(
+	grant_ref_t ref, domid_t domid,
+	struct page *page, int readonly)
+{
+	gnttab_grant_foreign_access_ref(ref, domid, xen_page_to_gfn(page),
+					readonly);
+}
+
 void gnttab_grant_foreign_transfer_ref(grant_ref_t, domid_t domid,
 				       unsigned long pfn);
 
@@ -163,10 +174,13 @@ gnttab_set_unmap_op(struct gnttab_unmap_grant_ref *unmap, phys_addr_t addr,
 	unmap->dev_bus_addr = 0;
 }
 
-int arch_gnttab_init(unsigned long nr_shared);
+int arch_gnttab_init(unsigned long nr_shared, unsigned long nr_status);
 int arch_gnttab_map_shared(xen_pfn_t *frames, unsigned long nr_gframes,
 			   unsigned long max_nr_gframes,
 			   void **__shared);
+int arch_gnttab_map_status(uint64_t *frames, unsigned long nr_gframes,
+			   unsigned long max_nr_gframes,
+			   grant_status_t **__shared);
 void arch_gnttab_unmap(void *shared, unsigned long nr_gframes);
 
 struct grant_frames {
@@ -222,6 +236,52 @@ static inline struct xen_page_foreign *xen_page_foreign(struct page *page)
 	BUILD_BUG_ON(sizeof(struct xen_page_foreign) > BITS_PER_LONG);
 	return (struct xen_page_foreign *)&page->private;
 #endif
+}
+
+/* Split Linux page in chunk of the size of the grant and call fn
+ *
+ * Parameters of fn:
+ *	gfn: guest frame number
+ *	offset: offset in the grant
+ *	len: length of the data in the grant.
+ *	data: internal information
+ */
+typedef void (*xen_grant_fn_t)(unsigned long gfn, unsigned int offset,
+			       unsigned int len, void *data);
+
+void gnttab_foreach_grant_in_range(struct page *page,
+				   unsigned int offset,
+				   unsigned int len,
+				   xen_grant_fn_t fn,
+				   void *data);
+
+/* Helper to get to call fn only on the first "grant chunk" */
+static inline void gnttab_for_one_grant(struct page *page, unsigned int offset,
+					unsigned len, xen_grant_fn_t fn,
+					void *data)
+{
+	/* The first request is limited to the size of one grant */
+	len = min_t(unsigned int, XEN_PAGE_SIZE - (offset & ~XEN_PAGE_MASK),
+		    len);
+
+	gnttab_foreach_grant_in_range(page, offset, len, fn, data);
+}
+
+/* Get @nr_grefs grants from an array of page and call fn for each grant */
+void gnttab_foreach_grant(struct page **pages,
+			  unsigned int nr_grefs,
+			  xen_grant_fn_t fn,
+			  void *data);
+
+/* Get the number of grant in a specified region
+ *
+ * start: Offset from the beginning of the first page
+ * len: total length of data (can cross multiple page)
+ */
+static inline unsigned int gnttab_count_grant(unsigned int start,
+					      unsigned int len)
+{
+	return XEN_PFN_UP(xen_offset_in_page(start) + len);
 }
 
 #endif /* __ASM_GNTTAB_H__ */

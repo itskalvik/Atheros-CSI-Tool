@@ -107,9 +107,9 @@ static void idletimer_tg_work(struct work_struct *work)
 	sysfs_notify(idletimer_tg_kobj, NULL, timer->attr.attr.name);
 }
 
-static void idletimer_tg_expired(unsigned long data)
+static void idletimer_tg_expired(struct timer_list *t)
 {
-	struct idletimer_tg *timer = (struct idletimer_tg *) data;
+	struct idletimer_tg *timer = from_timer(timer, t, timer);
 
 	pr_debug("timer %s expired\n", timer->attr.attr.name);
 
@@ -126,6 +126,7 @@ static int idletimer_tg_create(struct idletimer_tg_info *info)
 		goto out;
 	}
 
+	sysfs_attr_init(&info->timer->attr.attr);
 	info->timer->attr.attr.name = kstrdup(info->label, GFP_KERNEL);
 	if (!info->timer->attr.attr.name) {
 		ret = -ENOMEM;
@@ -142,8 +143,7 @@ static int idletimer_tg_create(struct idletimer_tg_info *info)
 
 	list_add(&info->timer->entry, &idletimer_tg_list);
 
-	setup_timer(&info->timer->timer, idletimer_tg_expired,
-		    (unsigned long) info->timer);
+	timer_setup(&info->timer->timer, idletimer_tg_expired, 0);
 	info->timer->refcnt = 1;
 
 	mod_timer(&info->timer->timer,
@@ -235,6 +235,7 @@ static void idletimer_tg_destroy(const struct xt_tgdtor_param *par)
 
 		list_del(&info->timer->entry);
 		del_timer_sync(&info->timer->timer);
+		cancel_work_sync(&info->timer->work);
 		sysfs_remove_file(idletimer_tg_kobj, &info->timer->attr.attr);
 		kfree(info->timer->attr.attr.name);
 		kfree(info->timer);

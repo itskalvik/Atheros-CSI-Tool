@@ -1,10 +1,16 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __NET_PKT_SCHED_H
 #define __NET_PKT_SCHED_H
 
 #include <linux/jiffies.h>
 #include <linux/ktime.h>
 #include <linux/if_vlan.h>
+#include <linux/netdevice.h>
 #include <net/sch_generic.h>
+#include <net/net_namespace.h>
+#include <uapi/linux/pkt_sched.h>
+
+#define DEFAULT_TX_QUEUE_LEN	1000
 
 struct qdisc_walker {
 	int	stop;
@@ -61,17 +67,18 @@ psched_tdiff_bounded(psched_time_t tv1, psched_time_t tv2, psched_time_t bound)
 }
 
 struct qdisc_watchdog {
+	u64		last_expires;
 	struct hrtimer	timer;
 	struct Qdisc	*qdisc;
 };
 
 void qdisc_watchdog_init(struct qdisc_watchdog *wd, struct Qdisc *qdisc);
-void qdisc_watchdog_schedule_ns(struct qdisc_watchdog *wd, u64 expires, bool throttle);
+void qdisc_watchdog_schedule_ns(struct qdisc_watchdog *wd, u64 expires);
 
 static inline void qdisc_watchdog_schedule(struct qdisc_watchdog *wd,
 					   psched_time_t expires)
 {
-	qdisc_watchdog_schedule_ns(wd, PSCHED_TICKS2NS(expires), true);
+	qdisc_watchdog_schedule_ns(wd, PSCHED_TICKS2NS(expires));
 }
 
 void qdisc_watchdog_cancel(struct qdisc_watchdog *wd);
@@ -89,8 +96,8 @@ int unregister_qdisc(struct Qdisc_ops *qops);
 void qdisc_get_default(char *id, size_t len);
 int qdisc_set_default(const char *id);
 
-void qdisc_list_add(struct Qdisc *q);
-void qdisc_list_del(struct Qdisc *q);
+void qdisc_hash_add(struct Qdisc *q, bool invisible);
+void qdisc_hash_del(struct Qdisc *q);
 struct Qdisc *qdisc_lookup(struct net_device *dev, u32 handle);
 struct Qdisc *qdisc_lookup_class(struct net_device *dev, u32 handle);
 struct qdisc_rate_table *qdisc_get_rtab(struct tc_ratespec *r,
@@ -110,11 +117,6 @@ static inline void qdisc_run(struct Qdisc *q)
 		__qdisc_run(q);
 }
 
-int tc_classify_compat(struct sk_buff *skb, const struct tcf_proto *tp,
-		       struct tcf_result *res);
-int tc_classify(struct sk_buff *skb, const struct tcf_proto *tp,
-		struct tcf_result *res);
-
 static inline __be16 tc_skb_protocol(const struct sk_buff *skb)
 {
 	/* We need to take extra care in case the skb came via
@@ -133,5 +135,19 @@ static inline unsigned int psched_mtu(const struct net_device *dev)
 {
 	return dev->mtu + dev->hard_header_len;
 }
+
+static inline struct net *qdisc_net(struct Qdisc *q)
+{
+	return dev_net(q->dev_queue->dev);
+}
+
+struct tc_cbs_qopt_offload {
+	u8 enable;
+	s32 queue;
+	s32 hicredit;
+	s32 locredit;
+	s32 idleslope;
+	s32 sendslope;
+};
 
 #endif

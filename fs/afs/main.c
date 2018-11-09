@@ -14,6 +14,8 @@
 #include <linux/init.h>
 #include <linux/completion.h>
 #include <linux/sched.h>
+#include <linux/random.h>
+#define CREATE_TRACE_POINTS
 #include "internal.h"
 
 MODULE_DESCRIPTION("AFS Client File System");
@@ -29,50 +31,81 @@ static char *rootcell;
 module_param(rootcell, charp, 0);
 MODULE_PARM_DESC(rootcell, "root AFS cell name and VL server IP addr list");
 
-struct afs_uuid afs_uuid;
 struct workqueue_struct *afs_wq;
+struct afs_net __afs_net;
 
 /*
- * get a client UUID
+ * Initialise an AFS network namespace record.
  */
-static int __init afs_get_client_UUID(void)
+static int __net_init afs_net_init(struct afs_net *net)
 {
-	struct timespec ts;
-	u64 uuidtime;
-	u16 clockseq;
 	int ret;
 
-	/* read the MAC address of one of the external interfaces and construct
-	 * a UUID from it */
-	ret = afs_get_MAC_address(afs_uuid.node, sizeof(afs_uuid.node));
+	net->live = true;
+	generate_random_uuid((unsigned char *)&net->uuid);
+
+	INIT_WORK(&net->charge_preallocation_work, afs_charge_preallocation);
+	mutex_init(&net->socket_mutex);
+
+	net->cells = RB_ROOT;
+	seqlock_init(&net->cells_lock);
+	INIT_WORK(&net->cells_manager, afs_manage_cells);
+	timer_setup(&net->cells_timer, afs_cells_timer, 0);
+
+	spin_lock_init(&net->proc_cells_lock);
+	INIT_LIST_HEAD(&net->proc_cells);
+
+	seqlock_init(&net->fs_lock);
+	net->fs_servers = RB_ROOT;
+	INIT_LIST_HEAD(&net->fs_updates);
+	INIT_HLIST_HEAD(&net->fs_proc);
+
+	INIT_HLIST_HEAD(&net->fs_addresses4);
+	INIT_HLIST_HEAD(&net->fs_addresses6);
+	seqlock_init(&net->fs_addr_lock);
+
+	INIT_WORK(&net->fs_manager, afs_manage_servers);
+	timer_setup(&net->fs_timer, afs_servers_timer, 0);
+
+	/* Register the /proc stuff */
+	ret = afs_proc_init(net);
 	if (ret < 0)
-		return ret;
+		goto error_proc;
 
-	getnstimeofday(&ts);
-	uuidtime = (u64) ts.tv_sec * 1000 * 1000 * 10;
-	uuidtime += ts.tv_nsec / 100;
-	uuidtime += AFS_UUID_TO_UNIX_TIME;
-	afs_uuid.time_low = uuidtime;
-	afs_uuid.time_mid = uuidtime >> 32;
-	afs_uuid.time_hi_and_version = (uuidtime >> 48) & AFS_UUID_TIMEHI_MASK;
-	afs_uuid.time_hi_and_version |= AFS_UUID_VERSION_TIME;
+	/* Initialise the cell DB */
+	ret = afs_cell_init(net, rootcell);
+	if (ret < 0)
+		goto error_cell_init;
 
-	get_random_bytes(&clockseq, 2);
-	afs_uuid.clock_seq_low = clockseq;
-	afs_uuid.clock_seq_hi_and_reserved =
-		(clockseq >> 8) & AFS_UUID_CLOCKHI_MASK;
-	afs_uuid.clock_seq_hi_and_reserved |= AFS_UUID_VARIANT_STD;
-
-	_debug("AFS UUID: %08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x",
-	       afs_uuid.time_low,
-	       afs_uuid.time_mid,
-	       afs_uuid.time_hi_and_version,
-	       afs_uuid.clock_seq_hi_and_reserved,
-	       afs_uuid.clock_seq_low,
-	       afs_uuid.node[0], afs_uuid.node[1], afs_uuid.node[2],
-	       afs_uuid.node[3], afs_uuid.node[4], afs_uuid.node[5]);
+	/* Create the RxRPC transport */
+	ret = afs_open_socket(net);
+	if (ret < 0)
+		goto error_open_socket;
 
 	return 0;
+
+error_open_socket:
+	net->live = false;
+	afs_cell_purge(net);
+	afs_purge_servers(net);
+error_cell_init:
+	net->live = false;
+	afs_proc_cleanup(net);
+error_proc:
+	net->live = false;
+	return ret;
+}
+
+/*
+ * Clean up and destroy an AFS network namespace record.
+ */
+static void __net_exit afs_net_exit(struct afs_net *net)
+{
+	net->live = false;
+	afs_cell_purge(net);
+	afs_purge_servers(net);
+	afs_close_socket(net);
+	afs_proc_cleanup(net);
 }
 
 /*
@@ -80,24 +113,19 @@ static int __init afs_get_client_UUID(void)
  */
 static int __init afs_init(void)
 {
-	int ret;
+	int ret = -ENOMEM;
 
 	printk(KERN_INFO "kAFS: Red Hat AFS client v0.1 registering.\n");
 
-	ret = afs_get_client_UUID();
-	if (ret < 0)
-		return ret;
-
-	/* create workqueue */
-	ret = -ENOMEM;
 	afs_wq = alloc_workqueue("afs", 0, 0);
 	if (!afs_wq)
-		return ret;
-
-	/* register the /proc stuff */
-	ret = afs_proc_init();
-	if (ret < 0)
-		goto error_proc;
+		goto error_afs_wq;
+	afs_async_calls = alloc_workqueue("kafsd", WQ_MEM_RECLAIM, 0);
+	if (!afs_async_calls)
+		goto error_async;
+	afs_lock_manager = alloc_workqueue("kafs_lockd", WQ_MEM_RECLAIM, 0);
+	if (!afs_lock_manager)
+		goto error_lockmgr;
 
 #ifdef CONFIG_AFS_FSCACHE
 	/* we want to be able to cache */
@@ -106,25 +134,9 @@ static int __init afs_init(void)
 		goto error_cache;
 #endif
 
-	/* initialise the cell DB */
-	ret = afs_cell_init(rootcell);
+	ret = afs_net_init(&__afs_net);
 	if (ret < 0)
-		goto error_cell_init;
-
-	/* initialise the VL update process */
-	ret = afs_vlocation_update_init();
-	if (ret < 0)
-		goto error_vl_update_init;
-
-	/* initialise the callback update process */
-	ret = afs_callback_update_init();
-	if (ret < 0)
-		goto error_callback_update_init;
-
-	/* create the RxRPC transport */
-	ret = afs_open_socket();
-	if (ret < 0)
-		goto error_open_socket;
+		goto error_net;
 
 	/* register the filesystems */
 	ret = afs_fs_init();
@@ -134,21 +146,18 @@ static int __init afs_init(void)
 	return ret;
 
 error_fs:
-	afs_close_socket();
-error_open_socket:
-	afs_callback_update_kill();
-error_callback_update_init:
-	afs_vlocation_purge();
-error_vl_update_init:
-	afs_cell_purge();
-error_cell_init:
+	afs_net_exit(&__afs_net);
+error_net:
 #ifdef CONFIG_AFS_FSCACHE
 	fscache_unregister_netfs(&afs_cache_netfs);
 error_cache:
 #endif
-	afs_proc_cleanup();
-error_proc:
+	destroy_workqueue(afs_lock_manager);
+error_lockmgr:
+	destroy_workqueue(afs_async_calls);
+error_async:
 	destroy_workqueue(afs_wq);
+error_afs_wq:
 	rcu_barrier();
 	printk(KERN_ERR "kAFS: failed to register: %d\n", ret);
 	return ret;
@@ -167,17 +176,14 @@ static void __exit afs_exit(void)
 	printk(KERN_INFO "kAFS: Red Hat AFS client v0.1 unregistering.\n");
 
 	afs_fs_exit();
-	afs_kill_lock_manager();
-	afs_close_socket();
-	afs_purge_servers();
-	afs_callback_update_kill();
-	afs_vlocation_purge();
-	destroy_workqueue(afs_wq);
-	afs_cell_purge();
+	afs_net_exit(&__afs_net);
 #ifdef CONFIG_AFS_FSCACHE
 	fscache_unregister_netfs(&afs_cache_netfs);
 #endif
-	afs_proc_cleanup();
+	destroy_workqueue(afs_lock_manager);
+	destroy_workqueue(afs_async_calls);
+	destroy_workqueue(afs_wq);
+	afs_clean_up_permit_cache();
 	rcu_barrier();
 }
 

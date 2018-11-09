@@ -14,7 +14,6 @@
 #include <linux/module.h>
 #include <linux/i2c.h>
 #include <linux/acpi.h>
-#include <linux/gpio/consumer.h>
 #include <linux/interrupt.h>
 #include <linux/pm.h>
 #include <linux/pm_runtime.h>
@@ -27,7 +26,6 @@
 #include <linux/iio/trigger_consumer.h>
 
 #define KMX61_DRV_NAME "kmx61"
-#define KMX61_GPIO_NAME "kmx61_int"
 #define KMX61_IRQ_NAME "kmx61_event"
 
 #define KMX61_REG_WHO_AM_I	0x00
@@ -1005,7 +1003,6 @@ static int kmx61_mag_validate_trigger(struct iio_dev *indio_dev,
 }
 
 static const struct iio_info kmx61_acc_info = {
-	.driver_module		= THIS_MODULE,
 	.read_raw		= kmx61_read_raw,
 	.write_raw		= kmx61_write_raw,
 	.attrs			= &kmx61_acc_attribute_group,
@@ -1017,7 +1014,6 @@ static const struct iio_info kmx61_acc_info = {
 };
 
 static const struct iio_info kmx61_mag_info = {
-	.driver_module		= THIS_MODULE,
 	.read_raw		= kmx61_read_raw,
 	.write_raw		= kmx61_write_raw,
 	.attrs			= &kmx61_mag_attribute_group,
@@ -1089,7 +1085,6 @@ static int kmx61_trig_try_reenable(struct iio_trigger *trig)
 static const struct iio_trigger_ops kmx61_trigger_ops = {
 	.set_trigger_state = kmx61_data_rdy_trigger_set_state,
 	.try_reenable = kmx61_trig_try_reenable,
-	.owner = THIS_MODULE,
 };
 
 static irqreturn_t kmx61_event_handler(int irq, void *private)
@@ -1243,30 +1238,6 @@ static const char *kmx61_match_acpi_device(struct device *dev)
 	return dev_name(dev);
 }
 
-static int kmx61_gpio_probe(struct i2c_client *client, struct kmx61_data *data)
-{
-	struct device *dev;
-	struct gpio_desc *gpio;
-	int ret;
-
-	if (!client)
-		return -EINVAL;
-
-	dev = &client->dev;
-
-	/* data ready gpio interrupt pin */
-	gpio = devm_gpiod_get_index(dev, KMX61_GPIO_NAME, 0, GPIOD_IN);
-	if (IS_ERR(gpio)) {
-		dev_err(dev, "acpi gpio get index failed\n");
-		return PTR_ERR(gpio);
-	}
-
-	ret = gpiod_to_irq(gpio);
-
-	dev_dbg(dev, "GPIO resource, no:%d irq:%d\n", desc_to_gpio(gpio), ret);
-	return ret;
-}
-
 static struct iio_dev *kmx61_indiodev_setup(struct kmx61_data *data,
 					    const struct iio_info *info,
 					    const struct iio_chan_spec *chan,
@@ -1360,10 +1331,7 @@ static int kmx61_probe(struct i2c_client *client,
 	if (ret < 0)
 		return ret;
 
-	if (client->irq < 0)
-		client->irq = kmx61_gpio_probe(client, data);
-
-	if (client->irq >= 0) {
+	if (client->irq > 0) {
 		ret = devm_request_threaded_irq(&client->dev, client->irq,
 						kmx61_data_rdy_trig_poll,
 						kmx61_event_handler,
@@ -1418,6 +1386,14 @@ static int kmx61_probe(struct i2c_client *client,
 		}
 	}
 
+	ret = pm_runtime_set_active(&client->dev);
+	if (ret < 0)
+		goto err_buffer_cleanup_mag;
+
+	pm_runtime_enable(&client->dev);
+	pm_runtime_set_autosuspend_delay(&client->dev, KMX61_SLEEP_DELAY_MS);
+	pm_runtime_use_autosuspend(&client->dev);
+
 	ret = iio_device_register(data->acc_indio_dev);
 	if (ret < 0) {
 		dev_err(&client->dev, "Failed to register acc iio device\n");
@@ -1430,25 +1406,15 @@ static int kmx61_probe(struct i2c_client *client,
 		goto err_iio_unregister_acc;
 	}
 
-	ret = pm_runtime_set_active(&client->dev);
-	if (ret < 0)
-		goto err_iio_unregister_mag;
-
-	pm_runtime_enable(&client->dev);
-	pm_runtime_set_autosuspend_delay(&client->dev, KMX61_SLEEP_DELAY_MS);
-	pm_runtime_use_autosuspend(&client->dev);
-
 	return 0;
 
-err_iio_unregister_mag:
-	iio_device_unregister(data->mag_indio_dev);
 err_iio_unregister_acc:
 	iio_device_unregister(data->acc_indio_dev);
 err_buffer_cleanup_mag:
-	if (client->irq >= 0)
+	if (client->irq > 0)
 		iio_triggered_buffer_cleanup(data->mag_indio_dev);
 err_buffer_cleanup_acc:
-	if (client->irq >= 0)
+	if (client->irq > 0)
 		iio_triggered_buffer_cleanup(data->acc_indio_dev);
 err_trigger_unregister_motion:
 	iio_trigger_unregister(data->motion_trig);
@@ -1465,14 +1431,14 @@ static int kmx61_remove(struct i2c_client *client)
 {
 	struct kmx61_data *data = i2c_get_clientdata(client);
 
+	iio_device_unregister(data->acc_indio_dev);
+	iio_device_unregister(data->mag_indio_dev);
+
 	pm_runtime_disable(&client->dev);
 	pm_runtime_set_suspended(&client->dev);
 	pm_runtime_put_noidle(&client->dev);
 
-	iio_device_unregister(data->acc_indio_dev);
-	iio_device_unregister(data->mag_indio_dev);
-
-	if (client->irq >= 0) {
+	if (client->irq > 0) {
 		iio_triggered_buffer_cleanup(data->acc_indio_dev);
 		iio_triggered_buffer_cleanup(data->mag_indio_dev);
 		iio_trigger_unregister(data->acc_dready_trig);

@@ -10,10 +10,8 @@
 #include <linux/fs.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/i2c/bfin_twi.h>
 
 #include <asm/blackfin.h>
-#include <asm/gpio.h>
 #include <asm/gptimers.h>
 #include <asm/bfin_can.h>
 #include <asm/bfin_dma.h>
@@ -21,6 +19,7 @@
 #include <asm/bfin_serial.h>
 #include <asm/bfin5xx_spi.h>
 #include <asm/bfin_twi.h>
+#include <asm/gpio.h>
 
 /* Common code defines PORT_MUX on us, so redirect the MMR back locally */
 #ifdef BFIN_PORT_MUX

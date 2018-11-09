@@ -119,7 +119,7 @@ static int cm3232_reg_init(struct cm3232_chip *chip)
 	if (ret < 0)
 		dev_err(&chip->client->dev, "Error writing reg_cmd\n");
 
-	return 0;
+	return ret;
 }
 
 /**
@@ -322,7 +322,6 @@ static const struct attribute_group cm3232_attribute_group = {
 };
 
 static const struct iio_info cm3232_info = {
-	.driver_module		= THIS_MODULE,
 	.read_raw		= &cm3232_read_raw,
 	.write_raw		= &cm3232_write_raw,
 	.attrs			= &cm3232_attribute_group,
@@ -417,11 +416,11 @@ static const struct of_device_id cm3232_of_match[] = {
 	{.compatible = "capella,cm3232"},
 	{}
 };
+MODULE_DEVICE_TABLE(of, cm3232_of_match);
 
 static struct i2c_driver cm3232_driver = {
 	.driver = {
 		.name	= "cm3232",
-		.owner	= THIS_MODULE,
 		.of_match_table = of_match_ptr(cm3232_of_match),
 #ifdef CONFIG_PM_SLEEP
 		.pm	= &cm3232_pm_ops,

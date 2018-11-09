@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __ASM_SPARC64_ELF_H
 #define __ASM_SPARC64_ELF_H
 
@@ -7,7 +8,7 @@
 
 #include <asm/ptrace.h>
 #include <asm/processor.h>
-#include <asm/uaccess.h>
+#include <asm/extable_64.h>
 #include <asm/spitfire.h>
 
 /*
@@ -95,6 +96,7 @@
  * really available.  So we simply advertise only "crypto" support.
  */
 #define HWCAP_SPARC_CRYPTO	0x04000000 /* CRYPTO insns available */
+#define HWCAP_SPARC_ADI		0x08000000 /* ADI available */
 
 #define CORE_DUMP_USE_REGSET
 
@@ -209,4 +211,18 @@ do {	if ((ex).e_ident[EI_CLASS] == ELFCLASS32)	\
 			(current->personality & (~PER_MASK)));	\
 } while (0)
 
+extern unsigned int vdso_enabled;
+
+#define	ARCH_DLINFO							\
+do {									\
+	if (vdso_enabled)						\
+		NEW_AUX_ENT(AT_SYSINFO_EHDR,				\
+			    (unsigned long)current->mm->context.vdso);	\
+} while (0)
+
+struct linux_binprm;
+
+#define ARCH_HAS_SETUP_ADDITIONAL_PAGES	1
+extern int arch_setup_additional_pages(struct linux_binprm *bprm,
+					int uses_interp);
 #endif /* !(__ASM_SPARC64_ELF_H) */

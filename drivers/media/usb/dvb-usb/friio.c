@@ -21,7 +21,7 @@ MODULE_PARM_DESC(debug,
 
 DVB_DEFINE_MOD_OPT_ADAPTER_NR(adapter_nr);
 
-/**
+/*
  * Indirect I2C access to the PLL via FE.
  * whole I2C protocol data to the PLL is sent via the FE's I2C register.
  * This is done by a control msg to the FE with the I2C data accompanied, and
@@ -320,8 +320,8 @@ restart:
  */
 	if (rbuf[0] & 0x80) {	/* still in PowerOnReset state? */
 		if (++retry > 3) {
-			deb_info("failed to get the correct"
-				 " FE demod status:0x%02x\n", rbuf[0]);
+			deb_info("failed to get the correct FE demod status:0x%02x\n",
+				 rbuf[0]);
 			goto error;
 		}
 		msleep(100);

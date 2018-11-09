@@ -23,6 +23,7 @@
 #include <linux/mutex.h>
 #include <linux/log2.h>
 #include <linux/sched.h>
+#include <linux/sched/mm.h>
 #include <linux/slab.h>
 #include <linux/amd-iommu.h>
 #include <linux/notifier.h>
@@ -31,13 +32,7 @@
 struct mm_struct;
 
 #include "kfd_priv.h"
-
-/*
- * Initial size for the array of queues.
- * The allocated size is doubled each time
- * it is exceeded up to MAX_PROCESS_QUEUES.
- */
-#define INITIAL_QUEUE_ARRAY_SIZE 16
+#include "kfd_dbgmgr.h"
 
 /*
  * List of struct kfd_process (field kfd_process).
@@ -62,13 +57,12 @@ static struct kfd_process *create_process(const struct task_struct *thread);
 void kfd_process_create_wq(void)
 {
 	if (!kfd_process_wq)
-		kfd_process_wq = create_workqueue("kfd_process_wq");
+		kfd_process_wq = alloc_workqueue("kfd_process_wq", 0, 0);
 }
 
 void kfd_process_destroy_wq(void)
 {
 	if (kfd_process_wq) {
-		flush_workqueue(kfd_process_wq);
 		destroy_workqueue(kfd_process_wq);
 		kfd_process_wq = NULL;
 	}
@@ -78,9 +72,7 @@ struct kfd_process *kfd_create_process(const struct task_struct *thread)
 {
 	struct kfd_process *process;
 
-	BUG_ON(!kfd_process_wq);
-
-	if (thread->mm == NULL)
+	if (!thread->mm)
 		return ERR_PTR(-EINVAL);
 
 	/* Only the pthreads threading model is supported. */
@@ -100,7 +92,7 @@ struct kfd_process *kfd_create_process(const struct task_struct *thread)
 	/* A prior open of /dev/kfd could have already created the process. */
 	process = find_process(thread);
 	if (process)
-		pr_debug("kfd: process already found\n");
+		pr_debug("Process already found\n");
 
 	if (!process)
 		process = create_process(thread);
@@ -116,7 +108,7 @@ struct kfd_process *kfd_get_process(const struct task_struct *thread)
 {
 	struct kfd_process *process;
 
-	if (thread->mm == NULL)
+	if (!thread->mm)
 		return ERR_PTR(-EINVAL);
 
 	/* Only the pthreads threading model is supported. */
@@ -172,23 +164,25 @@ static void kfd_process_wq_release(struct work_struct *work)
 		pr_debug("Releasing pdd (topology id %d) for process (pasid %d) in workqueue\n",
 				pdd->dev->id, p->pasid);
 
-		amd_iommu_unbind_pasid(pdd->dev->pdev, p->pasid);
-		list_del(&pdd->per_device_list);
+		if (pdd->bound == PDD_BOUND)
+			amd_iommu_unbind_pasid(pdd->dev->pdev, p->pasid);
 
+		list_del(&pdd->per_device_list);
 		kfree(pdd);
 	}
 
+	kfd_event_free_process(p);
+
 	kfd_pasid_free(p->pasid);
+	kfd_free_process_doorbells(p);
 
 	mutex_unlock(&p->mutex);
 
 	mutex_destroy(&p->mutex);
 
-	kfree(p->queues);
-
 	kfree(p);
 
-	kfree((void *)work);
+	kfree(work);
 }
 
 static void kfd_process_destroy_delayed(struct rcu_head *rcu)
@@ -196,15 +190,11 @@ static void kfd_process_destroy_delayed(struct rcu_head *rcu)
 	struct kfd_process_release_work *work;
 	struct kfd_process *p;
 
-	BUG_ON(!kfd_process_wq);
-
 	p = container_of(rcu, struct kfd_process, rcu);
-	BUG_ON(atomic_read(&p->mm->mm_count) <= 0);
 
 	mmdrop(p->mm);
 
-	work = (struct kfd_process_release_work *)
-		kmalloc(sizeof(struct kfd_process_release_work), GFP_ATOMIC);
+	work = kmalloc(sizeof(struct kfd_process_release_work), GFP_ATOMIC);
 
 	if (work) {
 		INIT_WORK((struct work_struct *) work, kfd_process_wq_release);
@@ -217,13 +207,15 @@ static void kfd_process_notifier_release(struct mmu_notifier *mn,
 					struct mm_struct *mm)
 {
 	struct kfd_process *p;
+	struct kfd_process_device *pdd = NULL;
 
 	/*
 	 * The kfd_process structure can not be free because the
 	 * mmu_notifier srcu is read locked
 	 */
 	p = container_of(mn, struct kfd_process, mmu_notifier);
-	BUG_ON(p->mm != mm);
+	if (WARN_ON(p->mm != mm))
+		return;
 
 	mutex_lock(&kfd_processes_mutex);
 	hash_del_rcu(&p->kfd_processes);
@@ -232,7 +224,24 @@ static void kfd_process_notifier_release(struct mmu_notifier *mn,
 
 	mutex_lock(&p->mutex);
 
-	/* In case our notifier is called before IOMMU notifier */
+	/* Iterate over all process device data structures and if the
+	 * pdd is in debug mode, we should first force unregistration,
+	 * then we will be able to destroy the queues
+	 */
+	list_for_each_entry(pdd, &p->per_device_data, per_device_list) {
+		struct kfd_dev *dev = pdd->dev;
+
+		mutex_lock(kfd_get_dbgmgr_mutex());
+		if (dev && dev->dbgmgr && dev->dbgmgr->pasid == p->pasid) {
+			if (!kfd_dbgmgr_unregister(dev->dbgmgr, p)) {
+				kfd_dbgmgr_destroy(dev->dbgmgr);
+				dev->dbgmgr = NULL;
+			}
+		}
+		mutex_unlock(kfd_get_dbgmgr_mutex());
+	}
+
+	kfd_process_dequeue_from_all_devices(p);
 	pqm_uninit(&p->pqm);
 
 	mutex_unlock(&p->mutex);
@@ -242,7 +251,7 @@ static void kfd_process_notifier_release(struct mmu_notifier *mn,
 	 * and because the mmu_notifier_unregister function also drop
 	 * mm_count we need to take an extra count here.
 	 */
-	atomic_inc(&p->mm->mm_count);
+	mmgrab(p->mm);
 	mmu_notifier_unregister_no_release(&p->mmu_notifier, p->mm);
 	mmu_notifier_call_srcu(&p->rcu, &kfd_process_destroy_delayed);
 }
@@ -261,14 +270,12 @@ static struct kfd_process *create_process(const struct task_struct *thread)
 	if (!process)
 		goto err_alloc_process;
 
-	process->queues = kmalloc_array(INITIAL_QUEUE_ARRAY_SIZE,
-					sizeof(process->queues[0]), GFP_KERNEL);
-	if (!process->queues)
-		goto err_alloc_queues;
-
 	process->pasid = kfd_pasid_alloc();
 	if (process->pasid == 0)
 		goto err_alloc_pasid;
+
+	if (kfd_alloc_process_doorbells(process) < 0)
+		goto err_alloc_doorbells;
 
 	mutex_init(&process->mutex);
 
@@ -285,32 +292,34 @@ static struct kfd_process *create_process(const struct task_struct *thread)
 
 	process->lead_thread = thread->group_leader;
 
-	process->queue_array_size = INITIAL_QUEUE_ARRAY_SIZE;
-
 	INIT_LIST_HEAD(&process->per_device_data);
+
+	kfd_event_init_process(process);
 
 	err = pqm_init(&process->pqm, process);
 	if (err != 0)
 		goto err_process_pqm_init;
 
 	/* init process apertures*/
-	process->is_32bit_user_mode = is_compat_task();
-	if (kfd_init_apertures(process) != 0)
-		goto err_init_apretures;
+	process->is_32bit_user_mode = in_compat_syscall();
+	err = kfd_init_apertures(process);
+	if (err != 0)
+		goto err_init_apertures;
 
 	return process;
 
-err_init_apretures:
+err_init_apertures:
 	pqm_uninit(&process->pqm);
 err_process_pqm_init:
 	hash_del_rcu(&process->kfd_processes);
 	synchronize_rcu();
 	mmu_notifier_unregister_no_release(&process->mmu_notifier, process->mm);
 err_mmu_notifier:
+	mutex_destroy(&process->mutex);
+	kfd_free_process_doorbells(process);
+err_alloc_doorbells:
 	kfd_pasid_free(process->pasid);
 err_alloc_pasid:
-	kfree(process->queues);
-err_alloc_queues:
 	kfree(process);
 err_alloc_process:
 	return ERR_PTR(err);
@@ -323,9 +332,9 @@ struct kfd_process_device *kfd_get_process_device_data(struct kfd_dev *dev,
 
 	list_for_each_entry(pdd, &p->per_device_data, per_device_list)
 		if (pdd->dev == dev)
-			break;
+			return pdd;
 
-	return pdd;
+	return NULL;
 }
 
 struct kfd_process_device *kfd_create_process_device_data(struct kfd_dev *dev,
@@ -339,6 +348,9 @@ struct kfd_process_device *kfd_create_process_device_data(struct kfd_dev *dev,
 		INIT_LIST_HEAD(&pdd->qpd.queues_list);
 		INIT_LIST_HEAD(&pdd->qpd.priv_queue_list);
 		pdd->qpd.dqm = dev->dqm;
+		pdd->process = p;
+		pdd->bound = PDD_UNBOUND;
+		pdd->already_dequeued = false;
 		list_add(&pdd->per_device_list, &p->per_device_data);
 	}
 
@@ -364,62 +376,133 @@ struct kfd_process_device *kfd_bind_process_to_device(struct kfd_dev *dev,
 		return ERR_PTR(-ENOMEM);
 	}
 
-	if (pdd->bound)
+	if (pdd->bound == PDD_BOUND) {
 		return pdd;
+	} else if (unlikely(pdd->bound == PDD_BOUND_SUSPENDED)) {
+		pr_err("Binding PDD_BOUND_SUSPENDED pdd is unexpected!\n");
+		return ERR_PTR(-EINVAL);
+	}
 
 	err = amd_iommu_bind_pasid(dev->pdev, p->pasid, p->lead_thread);
 	if (err < 0)
 		return ERR_PTR(err);
 
-	pdd->bound = true;
+	pdd->bound = PDD_BOUND;
 
 	return pdd;
 }
 
-void kfd_unbind_process_from_device(struct kfd_dev *dev, unsigned int pasid)
+/*
+ * Bind processes do the device that have been temporarily unbound
+ * (PDD_BOUND_SUSPENDED) in kfd_unbind_processes_from_device.
+ */
+int kfd_bind_processes_to_device(struct kfd_dev *dev)
 {
-	struct kfd_process *p;
 	struct kfd_process_device *pdd;
-	int idx, i;
+	struct kfd_process *p;
+	unsigned int temp;
+	int err = 0;
 
-	BUG_ON(dev == NULL);
+	int idx = srcu_read_lock(&kfd_processes_srcu);
 
-	idx = srcu_read_lock(&kfd_processes_srcu);
+	hash_for_each_rcu(kfd_processes_table, temp, p, kfd_processes) {
+		mutex_lock(&p->mutex);
+		pdd = kfd_get_process_device_data(dev, p);
+		if (pdd->bound != PDD_BOUND_SUSPENDED) {
+			mutex_unlock(&p->mutex);
+			continue;
+		}
 
-	hash_for_each_rcu(kfd_processes_table, i, p, kfd_processes)
-		if (p->pasid == pasid)
+		err = amd_iommu_bind_pasid(dev->pdev, p->pasid,
+				p->lead_thread);
+		if (err < 0) {
+			pr_err("Unexpected pasid %d binding failure\n",
+					p->pasid);
+			mutex_unlock(&p->mutex);
 			break;
+		}
+
+		pdd->bound = PDD_BOUND;
+		mutex_unlock(&p->mutex);
+	}
 
 	srcu_read_unlock(&kfd_processes_srcu, idx);
 
-	BUG_ON(p->pasid != pasid);
+	return err;
+}
 
-	mutex_lock(&p->mutex);
+/*
+ * Mark currently bound processes as PDD_BOUND_SUSPENDED. These
+ * processes will be restored to PDD_BOUND state in
+ * kfd_bind_processes_to_device.
+ */
+void kfd_unbind_processes_from_device(struct kfd_dev *dev)
+{
+	struct kfd_process_device *pdd;
+	struct kfd_process *p;
+	unsigned int temp;
 
-	pqm_uninit(&p->pqm);
+	int idx = srcu_read_lock(&kfd_processes_srcu);
 
-	pdd = kfd_get_process_device_data(dev, p);
+	hash_for_each_rcu(kfd_processes_table, temp, p, kfd_processes) {
+		mutex_lock(&p->mutex);
+		pdd = kfd_get_process_device_data(dev, p);
+
+		if (pdd->bound == PDD_BOUND)
+			pdd->bound = PDD_BOUND_SUSPENDED;
+		mutex_unlock(&p->mutex);
+	}
+
+	srcu_read_unlock(&kfd_processes_srcu, idx);
+}
+
+void kfd_process_iommu_unbind_callback(struct kfd_dev *dev, unsigned int pasid)
+{
+	struct kfd_process *p;
+	struct kfd_process_device *pdd;
 
 	/*
-	 * Just mark pdd as unbound, because we still need it to call
-	 * amd_iommu_unbind_pasid() in when the process exits.
-	 * We don't call amd_iommu_unbind_pasid() here
-	 * because the IOMMU called us.
+	 * Look for the process that matches the pasid. If there is no such
+	 * process, we either released it in amdkfd's own notifier, or there
+	 * is a bug. Unfortunately, there is no way to tell...
 	 */
+	p = kfd_lookup_process_by_pasid(pasid);
+	if (!p)
+		return;
+
+	pr_debug("Unbinding process %d from IOMMU\n", pasid);
+
+	mutex_lock(kfd_get_dbgmgr_mutex());
+
+	if (dev->dbgmgr && dev->dbgmgr->pasid == p->pasid) {
+		if (!kfd_dbgmgr_unregister(dev->dbgmgr, p)) {
+			kfd_dbgmgr_destroy(dev->dbgmgr);
+			dev->dbgmgr = NULL;
+		}
+	}
+
+	mutex_unlock(kfd_get_dbgmgr_mutex());
+
+	pdd = kfd_get_process_device_data(dev, p);
 	if (pdd)
-		pdd->bound = false;
+		/* For GPU relying on IOMMU, we need to dequeue here
+		 * when PASID is still bound.
+		 */
+		kfd_process_dequeue_from_device(pdd);
 
 	mutex_unlock(&p->mutex);
 }
 
-struct kfd_process_device *kfd_get_first_process_device_data(struct kfd_process *p)
+struct kfd_process_device *kfd_get_first_process_device_data(
+						struct kfd_process *p)
 {
 	return list_first_entry(&p->per_device_data,
 				struct kfd_process_device,
 				per_device_list);
 }
 
-struct kfd_process_device *kfd_get_next_process_device_data(struct kfd_process *p,
+struct kfd_process_device *kfd_get_next_process_device_data(
+						struct kfd_process *p,
 						struct kfd_process_device *pdd)
 {
 	if (list_is_last(&pdd->per_device_list, &p->per_device_data))
@@ -430,4 +513,24 @@ struct kfd_process_device *kfd_get_next_process_device_data(struct kfd_process *
 bool kfd_has_process_device_data(struct kfd_process *p)
 {
 	return !(list_empty(&p->per_device_data));
+}
+
+/* This returns with process->mutex locked. */
+struct kfd_process *kfd_lookup_process_by_pasid(unsigned int pasid)
+{
+	struct kfd_process *p;
+	unsigned int temp;
+
+	int idx = srcu_read_lock(&kfd_processes_srcu);
+
+	hash_for_each_rcu(kfd_processes_table, temp, p, kfd_processes) {
+		if (p->pasid == pasid) {
+			mutex_lock(&p->mutex);
+			break;
+		}
+	}
+
+	srcu_read_unlock(&kfd_processes_srcu, idx);
+
+	return p;
 }

@@ -46,7 +46,7 @@
 
 #include <asm/io.h>
 #include <asm/byteorder.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 
 #define AXNET_CMD	0x00
 #define AXNET_DATAPORT	0x10	/* NatSemi-defined port window offset. */
@@ -85,7 +85,7 @@ static struct net_device_stats *get_stats(struct net_device *dev);
 static void set_multicast_list(struct net_device *dev);
 static void axnet_tx_timeout(struct net_device *dev);
 static irqreturn_t ei_irq_wrapper(int irq, void *dev_id);
-static void ei_watchdog(u_long arg);
+static void ei_watchdog(struct timer_list *t);
 static void axnet_reset_8390(struct net_device *dev);
 
 static int mdio_read(unsigned int addr, int phy_id, int loc);
@@ -134,7 +134,6 @@ static const struct net_device_ops axnet_netdev_ops = {
 	.ndo_tx_timeout		= axnet_tx_timeout,
 	.ndo_get_stats		= get_stats,
 	.ndo_set_rx_mode	= set_multicast_list,
-	.ndo_change_mtu		= eth_change_mtu,
 	.ndo_set_mac_address 	= eth_mac_addr,
 	.ndo_validate_addr	= eth_validate_addr,
 };
@@ -484,7 +483,7 @@ static int axnet_open(struct net_device *dev)
     link->open++;
 
     info->link_status = 0x00;
-    setup_timer(&info->watchdog, ei_watchdog, (u_long)dev);
+    timer_setup(&info->watchdog, ei_watchdog, 0);
     mod_timer(&info->watchdog, jiffies + HZ);
 
     return ax_open(dev);
@@ -548,10 +547,10 @@ static irqreturn_t ei_irq_wrapper(int irq, void *dev_id)
     return ax_interrupt(irq, dev_id);
 }
 
-static void ei_watchdog(u_long arg)
+static void ei_watchdog(struct timer_list *t)
 {
-    struct net_device *dev = (struct net_device *)(arg);
-    struct axnet_dev *info = PRIV(dev);
+    struct axnet_dev *info = from_timer(info, t, watchdog);
+    struct net_device *dev = info->p_dev->priv;
     unsigned int nic_base = dev->base_addr;
     unsigned int mii_addr = nic_base + AXNET_MII_EEP;
     u_short link;
@@ -1041,7 +1040,7 @@ static netdev_tx_t axnet_start_xmit(struct sk_buff *skb,
 	{
 		ei_local->txing = 1;
 		NS8390_trigger_send(dev, send_length, output_page);
-		dev->trans_start = jiffies;
+		netif_trans_update(dev);
 		if (output_page == ei_local->tx_start_page) 
 		{
 			ei_local->tx1 = -1;
@@ -1270,7 +1269,7 @@ static void ei_tx_intr(struct net_device *dev)
 		{
 			ei_local->txing = 1;
 			NS8390_trigger_send(dev, ei_local->tx2, ei_local->tx_start_page + 6);
-			dev->trans_start = jiffies;
+			netif_trans_update(dev);
 			ei_local->tx2 = -1,
 			ei_local->lasttx = 2;
 		}
@@ -1287,7 +1286,7 @@ static void ei_tx_intr(struct net_device *dev)
 		{
 			ei_local->txing = 1;
 			NS8390_trigger_send(dev, ei_local->tx1, ei_local->tx_start_page);
-			dev->trans_start = jiffies;
+			netif_trans_update(dev);
 			ei_local->tx1 = -1;
 			ei_local->lasttx = 1;
 		}

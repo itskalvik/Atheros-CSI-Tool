@@ -259,10 +259,13 @@ static int pcan_usb_write_mode(struct peak_usb_device *dev, u8 onoff)
 /*
  * handle end of waiting for the device to reset
  */
-static void pcan_usb_restart(unsigned long arg)
+static void pcan_usb_restart(struct timer_list *t)
 {
+	struct pcan_usb *pdev = from_timer(pdev, t, restart_timer);
+	struct peak_usb_device *dev = &pdev->dev;
+
 	/* notify candev and netdev */
-	peak_usb_restart_complete((struct peak_usb_device *)arg);
+	peak_usb_restart_complete(dev);
 }
 
 /*
@@ -526,9 +529,9 @@ static int pcan_usb_decode_error(struct pcan_usb_msg_context *mc, u8 n,
 		hwts->hwtstamp = timeval_to_ktime(tv);
 	}
 
-	netif_rx(skb);
 	mc->netdev->stats.rx_packets++;
 	mc->netdev->stats.rx_bytes += cf->can_dlc;
+	netif_rx(skb);
 
 	return 0;
 }
@@ -659,12 +662,11 @@ static int pcan_usb_decode_data(struct pcan_usb_msg_context *mc, u8 status_len)
 	hwts = skb_hwtstamps(skb);
 	hwts->hwtstamp = timeval_to_ktime(tv);
 
-	/* push the skb */
-	netif_rx(skb);
-
 	/* update statistics */
 	mc->netdev->stats.rx_packets++;
 	mc->netdev->stats.rx_bytes += cf->can_dlc;
+	/* push the skb */
+	netif_rx(skb);
 
 	return 0;
 
@@ -799,9 +801,7 @@ static int pcan_usb_init(struct peak_usb_device *dev)
 	int err;
 
 	/* initialize a timer needed to wait for hardware restart */
-	init_timer(&pdev->restart_timer);
-	pdev->restart_timer.function = pcan_usb_restart;
-	pdev->restart_timer.data = (unsigned long)dev;
+	timer_setup(&pdev->restart_timer, pcan_usb_restart, 0);
 
 	/*
 	 * explicit use of dev_xxx() instead of netdev_xxx() here:

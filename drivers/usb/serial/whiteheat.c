@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * USB ConnectTech WhiteHEAT driver
  *
@@ -6,11 +7,6 @@
  *
  *	Copyright (C) 1999 - 2001
  *	    Greg Kroah-Hartman (greg@kroah.com)
- *
- *	This program is free software; you can redistribute it and/or modify
- *	it under the terms of the GNU General Public License as published by
- *	the Free Software Foundation; either version 2 of the License, or
- *	(at your option) any later version.
  *
  * See Documentation/usb/usb-serial.txt for more information on using this
  * driver
@@ -116,6 +112,8 @@ static struct usb_serial_driver whiteheat_device = {
 	.description =		"Connect Tech - WhiteHEAT",
 	.id_table =		id_table_std,
 	.num_ports =		4,
+	.num_bulk_in =		5,
+	.num_bulk_out =		5,
 	.attach =		whiteheat_attach,
 	.release =		whiteheat_release,
 	.port_probe =		whiteheat_port_probe,
@@ -217,6 +215,7 @@ static int whiteheat_firmware_attach(struct usb_serial *serial)
 /*****************************************************************************
  * Connect Tech's White Heat serial driver functions
  *****************************************************************************/
+
 static int whiteheat_attach(struct usb_serial *serial)
 {
 	struct usb_serial_port *command_port;
@@ -456,7 +455,6 @@ static int whiteheat_ioctl(struct tty_struct *tty,
 		serstruct.type = PORT_16654;
 		serstruct.line = port->minor;
 		serstruct.port = port->port_number;
-		serstruct.flags = ASYNC_SKIP_TEST | ASYNC_AUTO_IRQ;
 		serstruct.xmit_fifo_size = kfifo_size(&port->write_fifo);
 		serstruct.custom_divisor = 0;
 		serstruct.baud_base = 460800;

@@ -206,7 +206,7 @@ static int calc_tacc(unsigned int cyc, int nwait_en,
 }
 
 /**
- * s3c2410_calc_bank - calculate bank timing infromation
+ * s3c2410_calc_bank - calculate bank timing information
  * @cfg: The configuration we need to calculate for.
  * @bt: The bank timing information.
  *
@@ -249,7 +249,7 @@ static int s3c2410_calc_bank(struct s3c_cpufreq_config *cfg,
 	return 0;
 }
 
-static unsigned int tacc_tab[] = {
+static const unsigned int tacc_tab[] = {
 	[0]	= 1,
 	[1]	= 2,
 	[2]	= 3,
@@ -423,7 +423,7 @@ void s3c2410_iotiming_set(struct s3c_cpufreq_config *cfg,
  * @timings: The IO timing information to fill out.
  *
  * Calculate the @timings timing information from the current frequency
- * information in @cfg, and the new frequency configur
+ * information in @cfg, and the new frequency configuration
  * through all the IO banks, reading the state and then updating @iot
  * as necessary.
  *
@@ -453,11 +453,9 @@ int s3c2410_iotiming_get(struct s3c_cpufreq_config *cfg,
 		s3c_freq_iodbg("%s: bank %d: con %08lx\n",
 			       __func__, bank, bankcon);
 
-		bt = kzalloc(sizeof(struct s3c2410_iobank_timing), GFP_KERNEL);
-		if (!bt) {
-			printk(KERN_ERR "%s: no memory for bank\n", __func__);
+		bt = kzalloc(sizeof(*bt), GFP_KERNEL);
+		if (!bt)
 			return -ENOMEM;
-		}
 
 		/* find out in nWait is enabled for bank. */
 

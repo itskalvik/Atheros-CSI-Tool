@@ -11,11 +11,6 @@
  * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
  * more details.
  *
- * You should have received a copy of the GNU General Public License along with
- * this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110, USA
- *
- *
  ******************************************************************************/
 #ifndef	__RTW_RF_H_
 #define __RTW_RF_H_
@@ -36,7 +31,8 @@
 #define RTL8711_RF_DEF_SENS		4
 
 /*  We now define the following channels as the max channels in each
- * channel plan. */
+ * channel plan.
+ */
 /*  2G, total 14 chnls */
 /*  {1,2,3,4,5,6,7,8,9,10,11,12,13,14} */
 #define	MAX_CHANNEL_NUM_2G		14
@@ -70,7 +66,8 @@ enum capability {
 	cChannelAgility	= 0x0080,
 	cSpectrumMgnt	= 0x0100,
 	cQos		= 0x0200,	/* For HCCA, use with CF-Pollable
-					 * and CF-PollReq */
+					 * and CF-PollReq
+					 */
 	cShortSlotTime	= 0x0400,
 	cAPSD		= 0x0800,
 	cRM		= 0x1000,	/*  RRM (Radio Request Measurement) */
@@ -140,7 +137,6 @@ enum rt_rf_type_def {
 };
 
 u32 rtw_ch2freq(u32 ch);
-u32 rtw_freq2ch(u32 freq);
 
 
 #endif /* _RTL8711_RF_H_ */

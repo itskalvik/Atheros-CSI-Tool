@@ -851,7 +851,7 @@ static irqreturn_t gp2ap020a00f_prox_sensing_handler(int irq, void *data)
 				    GP2AP020A00F_SCAN_MODE_PROXIMITY,
 				    IIO_EV_TYPE_ROC,
 				    IIO_EV_DIR_RISING),
-			       iio_get_time_ns());
+			       iio_get_time_ns(indio_dev));
 		} else {
 			iio_push_event(indio_dev,
 			       IIO_UNMOD_EVENT_CODE(
@@ -859,7 +859,7 @@ static irqreturn_t gp2ap020a00f_prox_sensing_handler(int irq, void *data)
 				    GP2AP020A00F_SCAN_MODE_PROXIMITY,
 				    IIO_EV_TYPE_ROC,
 				    IIO_EV_DIR_FALLING),
-			       iio_get_time_ns());
+			       iio_get_time_ns(indio_dev));
 		}
 	}
 
@@ -925,7 +925,7 @@ static irqreturn_t gp2ap020a00f_thresh_event_handler(int irq, void *data)
 					    IIO_MOD_LIGHT_CLEAR,
 					    IIO_EV_TYPE_THRESH,
 					    IIO_EV_DIR_RISING),
-				       iio_get_time_ns());
+				       iio_get_time_ns(indio_dev));
 		}
 
 		if (test_bit(GP2AP020A00F_FLAG_ALS_FALLING_EV, &priv->flags)) {
@@ -939,7 +939,7 @@ static irqreturn_t gp2ap020a00f_thresh_event_handler(int irq, void *data)
 					    IIO_MOD_LIGHT_CLEAR,
 					    IIO_EV_TYPE_THRESH,
 					    IIO_EV_DIR_FALLING),
-				       iio_get_time_ns());
+				       iio_get_time_ns(indio_dev));
 		}
 	}
 
@@ -1287,22 +1287,14 @@ static int gp2ap020a00f_read_raw(struct iio_dev *indio_dev,
 	struct gp2ap020a00f_data *data = iio_priv(indio_dev);
 	int err = -EINVAL;
 
-	mutex_lock(&data->lock);
-
-	switch (mask) {
-	case IIO_CHAN_INFO_RAW:
-		if (iio_buffer_enabled(indio_dev)) {
-			err = -EBUSY;
-			goto error_unlock;
-		}
+	if (mask == IIO_CHAN_INFO_RAW) {
+		err = iio_device_claim_direct_mode(indio_dev);
+		if (err)
+			return err;
 
 		err = gp2ap020a00f_read_channel(data, chan, val);
-		break;
+		iio_device_release_direct_mode(indio_dev);
 	}
-
-error_unlock:
-	mutex_unlock(&data->lock);
-
 	return err < 0 ? err : IIO_VAL_INT;
 }
 
@@ -1392,7 +1384,6 @@ static const struct iio_info gp2ap020a00f_info = {
 	.read_event_config = &gp2ap020a00f_read_event_config,
 	.write_event_value = &gp2ap020a00f_write_event_val,
 	.write_event_config = &gp2ap020a00f_write_event_config,
-	.driver_module = THIS_MODULE,
 };
 
 static int gp2ap020a00f_buffer_postenable(struct iio_dev *indio_dev)
@@ -1489,7 +1480,6 @@ static const struct iio_buffer_setup_ops gp2ap020a00f_buffer_setup_ops = {
 };
 
 static const struct iio_trigger_ops gp2ap020a00f_trigger_ops = {
-	.owner = THIS_MODULE,
 };
 
 static int gp2ap020a00f_probe(struct i2c_client *client,
@@ -1634,13 +1624,13 @@ static const struct of_device_id gp2ap020a00f_of_match[] = {
 	{ .compatible = "sharp,gp2ap020a00f" },
 	{ }
 };
+MODULE_DEVICE_TABLE(of, gp2ap020a00f_of_match);
 #endif
 
 static struct i2c_driver gp2ap020a00f_driver = {
 	.driver = {
 		.name	= GP2A_I2C_NAME,
 		.of_match_table = of_match_ptr(gp2ap020a00f_of_match),
-		.owner	= THIS_MODULE,
 	},
 	.probe		= gp2ap020a00f_probe,
 	.remove		= gp2ap020a00f_remove,

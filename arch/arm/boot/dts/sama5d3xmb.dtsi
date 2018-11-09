@@ -87,6 +87,8 @@
 					isi_0: endpoint {
 						remote-endpoint = <&ov2640_0>;
 						bus-width = <8>;
+						vsync-active = <1>;
+						hsync-active = <1>;
 					};
 				};
 			};
@@ -113,18 +115,6 @@
 					&pinctrl_adc0_ad4
 					>;
 				status = "okay";
-			};
-
-			macb1: ethernet@f802c000 {
-				phy-mode = "rmii";
-
-				#address-cells = <1>;
-				#size-cells = <0>;
-				phy0: ethernet-phy@1 {
-					interrupt-parent = <&pioE>;
-					interrupts = <30 IRQ_TYPE_EDGE_FALLING>;
-					reg = <1>;
-				};
 			};
 
 			pinctrl@fffff200 {
@@ -176,14 +166,14 @@
 			};
 		};
 
-		usb0: gadget@00500000 {
+		usb0: gadget@500000 {
 			atmel,vbus-gpio = <&pioD 29 GPIO_ACTIVE_HIGH>;
 			pinctrl-names = "default";
 			pinctrl-0 = <&pinctrl_usba_vbus>;
 			status = "okay";
 		};
 
-		usb1: ohci@00600000 {
+		usb1: ohci@600000 {
 			num-ports = <3>;
 			atmel,vbus-gpio = <&pioD 25 GPIO_ACTIVE_HIGH
 					   &pioD 26 GPIO_ACTIVE_LOW
@@ -192,7 +182,7 @@
 			status = "okay";
 		};
 
-		usb2: ehci@00700000 {
+		usb2: ehci@700000 {
 			status = "okay";
 		};
 	};

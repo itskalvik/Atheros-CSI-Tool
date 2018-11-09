@@ -84,7 +84,7 @@ void ubifs_ro_mode(struct ubifs_info *c, int err)
 	if (!c->ro_error) {
 		c->ro_error = 1;
 		c->no_chk_data_crc = 0;
-		c->vfs_sb->s_flags |= MS_RDONLY;
+		c->vfs_sb->s_flags |= SB_RDONLY;
 		ubifs_warn(c, "switched to read-only mode, error %d", err);
 		dump_stack();
 	}
@@ -452,16 +452,22 @@ static enum hrtimer_restart wbuf_timer_callback_nolock(struct hrtimer *timer)
  */
 static void new_wbuf_timer_nolock(struct ubifs_wbuf *wbuf)
 {
+	ktime_t softlimit = ms_to_ktime(dirty_writeback_interval * 10);
+	unsigned long long delta = dirty_writeback_interval;
+
+	/* centi to milli, milli to nano, then 10% */
+	delta *= 10ULL * NSEC_PER_MSEC / 10ULL;
+
 	ubifs_assert(!hrtimer_active(&wbuf->timer));
+	ubifs_assert(delta <= ULONG_MAX);
 
 	if (wbuf->no_timer)
 		return;
 	dbg_io("set timer for jhead %s, %llu-%llu millisecs",
 	       dbg_jhead(wbuf->jhead),
-	       div_u64(ktime_to_ns(wbuf->softlimit), USEC_PER_SEC),
-	       div_u64(ktime_to_ns(wbuf->softlimit) + wbuf->delta,
-		       USEC_PER_SEC));
-	hrtimer_start_range_ns(&wbuf->timer, wbuf->softlimit, wbuf->delta,
+	       div_u64(ktime_to_ns(softlimit), USEC_PER_SEC),
+	       div_u64(ktime_to_ns(softlimit) + delta, USEC_PER_SEC));
+	hrtimer_start_range_ns(&wbuf->timer, softlimit, delta,
 			       HRTIMER_MODE_REL);
 }
 
@@ -1059,10 +1065,6 @@ int ubifs_wbuf_init(struct ubifs_info *c, struct ubifs_wbuf *wbuf)
 
 	hrtimer_init(&wbuf->timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 	wbuf->timer.function = wbuf_timer_callback_nolock;
-	wbuf->softlimit = ktime_set(WBUF_TIMEOUT_SOFTLIMIT, 0);
-	wbuf->delta = WBUF_TIMEOUT_HARDLIMIT - WBUF_TIMEOUT_SOFTLIMIT;
-	wbuf->delta *= 1000000000ULL;
-	ubifs_assert(wbuf->delta <= ULONG_MAX);
 	return 0;
 }
 

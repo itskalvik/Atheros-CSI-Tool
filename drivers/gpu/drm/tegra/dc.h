@@ -10,6 +10,126 @@
 #ifndef TEGRA_DC_H
 #define TEGRA_DC_H 1
 
+#include <linux/host1x.h>
+
+#include <drm/drm_crtc.h>
+
+#include "drm.h"
+
+struct tegra_output;
+
+struct tegra_dc_stats {
+	unsigned long frames;
+	unsigned long vblank;
+	unsigned long underflow;
+	unsigned long overflow;
+};
+
+struct tegra_dc_soc_info {
+	bool supports_border_color;
+	bool supports_interlacing;
+	bool supports_cursor;
+	bool supports_block_linear;
+	unsigned int pitch_align;
+	bool has_powergate;
+	bool broken_reset;
+};
+
+struct tegra_dc {
+	struct host1x_client client;
+	struct host1x_syncpt *syncpt;
+	struct device *dev;
+	spinlock_t lock;
+
+	struct drm_crtc base;
+	unsigned int powergate;
+	int pipe;
+
+	struct clk *clk;
+	struct reset_control *rst;
+	void __iomem *regs;
+	int irq;
+
+	struct tegra_output *rgb;
+
+	struct tegra_dc_stats stats;
+	struct list_head list;
+
+	struct drm_info_list *debugfs_files;
+	struct drm_minor *minor;
+	struct dentry *debugfs;
+
+	/* page-flip handling */
+	struct drm_pending_vblank_event *event;
+
+	const struct tegra_dc_soc_info *soc;
+
+	struct iommu_domain *domain;
+};
+
+static inline struct tegra_dc *
+host1x_client_to_dc(struct host1x_client *client)
+{
+	return container_of(client, struct tegra_dc, client);
+}
+
+static inline struct tegra_dc *to_tegra_dc(struct drm_crtc *crtc)
+{
+	return crtc ? container_of(crtc, struct tegra_dc, base) : NULL;
+}
+
+static inline void tegra_dc_writel(struct tegra_dc *dc, u32 value,
+				   unsigned int offset)
+{
+	trace_dc_writel(dc->dev, offset, value);
+	writel(value, dc->regs + (offset << 2));
+}
+
+static inline u32 tegra_dc_readl(struct tegra_dc *dc, unsigned int offset)
+{
+	u32 value = readl(dc->regs + (offset << 2));
+
+	trace_dc_readl(dc->dev, offset, value);
+
+	return value;
+}
+
+struct tegra_dc_window {
+	struct {
+		unsigned int x;
+		unsigned int y;
+		unsigned int w;
+		unsigned int h;
+	} src;
+	struct {
+		unsigned int x;
+		unsigned int y;
+		unsigned int w;
+		unsigned int h;
+	} dst;
+	unsigned int bits_per_pixel;
+	unsigned int stride[2];
+	unsigned long base[3];
+	bool bottom_up;
+
+	struct tegra_bo_tiling tiling;
+	u32 format;
+	u32 swap;
+};
+
+/* from dc.c */
+void tegra_dc_commit(struct tegra_dc *dc);
+int tegra_dc_state_setup_clock(struct tegra_dc *dc,
+			       struct drm_crtc_state *crtc_state,
+			       struct clk *clk, unsigned long pclk,
+			       unsigned int div);
+
+/* from rgb.c */
+int tegra_dc_rgb_probe(struct tegra_dc *dc);
+int tegra_dc_rgb_remove(struct tegra_dc *dc);
+int tegra_dc_rgb_init(struct drm_device *drm, struct tegra_dc *dc);
+int tegra_dc_rgb_exit(struct tegra_dc *dc);
+
 #define DC_CMD_GENERAL_INCR_SYNCPT		0x000
 #define DC_CMD_GENERAL_INCR_SYNCPT_CNTRL	0x001
 #define  SYNCPT_CNTRL_NO_STALL   (1 << 8)
@@ -86,6 +206,11 @@
 #define DC_CMD_REG_ACT_CONTROL			0x043
 
 #define DC_COM_CRC_CONTROL			0x300
+#define  DC_COM_CRC_CONTROL_ALWAYS (1 << 3)
+#define  DC_COM_CRC_CONTROL_FULL_FRAME  (0 << 2)
+#define  DC_COM_CRC_CONTROL_ACTIVE_DATA (1 << 2)
+#define  DC_COM_CRC_CONTROL_WAIT (1 << 1)
+#define  DC_COM_CRC_CONTROL_ENABLE (1 << 0)
 #define DC_COM_CRC_CHECKSUM			0x301
 #define DC_COM_PIN_OUTPUT_ENABLE(x) (0x302 + (x))
 #define DC_COM_PIN_OUTPUT_POLARITY(x) (0x306 + (x))
@@ -114,15 +239,17 @@
 #define DC_COM_CRC_CHECKSUM_LATCHED		0x329
 
 #define DC_DISP_DISP_SIGNAL_OPTIONS0		0x400
-#define H_PULSE_0_ENABLE (1 <<  8)
-#define H_PULSE_1_ENABLE (1 << 10)
-#define H_PULSE_2_ENABLE (1 << 12)
+#define H_PULSE0_ENABLE (1 <<  8)
+#define H_PULSE1_ENABLE (1 << 10)
+#define H_PULSE2_ENABLE (1 << 12)
 
 #define DC_DISP_DISP_SIGNAL_OPTIONS1		0x401
 
 #define DC_DISP_DISP_WIN_OPTIONS		0x402
 #define HDMI_ENABLE	(1 << 30)
 #define DSI_ENABLE	(1 << 29)
+#define SOR1_TIMING_CYA	(1 << 27)
+#define SOR1_ENABLE	(1 << 26)
 #define SOR_ENABLE	(1 << 25)
 #define CURSOR_ENABLE	(1 << 16)
 
@@ -242,9 +369,20 @@
 #define BASE_COLOR_SIZE565     (6 << 0)
 #define BASE_COLOR_SIZE332     (7 << 0)
 #define BASE_COLOR_SIZE888     (8 << 0)
+#define DITHER_CONTROL_MASK    (3 << 8)
 #define DITHER_CONTROL_DISABLE (0 << 8)
 #define DITHER_CONTROL_ORDERED (2 << 8)
 #define DITHER_CONTROL_ERRDIFF (3 << 8)
+#define BASE_COLOR_SIZE_MASK   (0xf << 0)
+#define BASE_COLOR_SIZE_666    (0 << 0)
+#define BASE_COLOR_SIZE_111    (1 << 0)
+#define BASE_COLOR_SIZE_222    (2 << 0)
+#define BASE_COLOR_SIZE_333    (3 << 0)
+#define BASE_COLOR_SIZE_444    (4 << 0)
+#define BASE_COLOR_SIZE_555    (5 << 0)
+#define BASE_COLOR_SIZE_565    (6 << 0)
+#define BASE_COLOR_SIZE_332    (7 << 0)
+#define BASE_COLOR_SIZE_888    (8 << 0)
 
 #define DC_DISP_SHIFT_CLOCK_OPTIONS		0x431
 #define  SC1_H_QUALIFIER_NONE	(1 << 16)

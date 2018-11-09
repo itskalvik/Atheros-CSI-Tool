@@ -1,15 +1,12 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  *  debugfs.h - a tiny little debug file system
  *
  *  Copyright (C) 2004 Greg Kroah-Hartman <greg@kroah.com>
  *  Copyright (C) 2004 IBM Inc.
  *
- *	This program is free software; you can redistribute it and/or
- *	modify it under the terms of the GNU General Public License version
- *	2 as published by the Free Software Foundation.
- *
  *  debugfs is for people to use instead of /proc or /sys.
- *  See Documentation/DocBook/filesystems for more details.
+ *  See Documentation/filesystems/ for more details.
  */
 
 #ifndef _DEBUGFS_H_
@@ -19,6 +16,7 @@
 #include <linux/seq_file.h>
 
 #include <linux/types.h>
+#include <linux/compiler.h>
 
 struct device;
 struct file_operations;
@@ -41,13 +39,29 @@ struct debugfs_regset32 {
 
 extern struct dentry *arch_debugfs_dir;
 
+#define DEFINE_DEBUGFS_ATTRIBUTE(__fops, __get, __set, __fmt)		\
+static int __fops ## _open(struct inode *inode, struct file *file)	\
+{									\
+	__simple_attr_check_format(__fmt, 0ull);			\
+	return simple_attr_open(inode, file, __get, __set, __fmt);	\
+}									\
+static const struct file_operations __fops = {				\
+	.owner	 = THIS_MODULE,						\
+	.open	 = __fops ## _open,					\
+	.release = simple_attr_release,					\
+	.read	 = debugfs_attr_read,					\
+	.write	 = debugfs_attr_write,					\
+	.llseek  = no_llseek,						\
+}
+
 #if defined(CONFIG_DEBUG_FS)
 
-/* declared over in file.c */
-extern const struct file_operations debugfs_file_operations;
-extern const struct inode_operations debugfs_link_operations;
+struct dentry *debugfs_lookup(const char *name, struct dentry *parent);
 
 struct dentry *debugfs_create_file(const char *name, umode_t mode,
+				   struct dentry *parent, void *data,
+				   const struct file_operations *fops);
+struct dentry *debugfs_create_file_unsafe(const char *name, umode_t mode,
 				   struct dentry *parent, void *data,
 				   const struct file_operations *fops);
 
@@ -61,13 +75,24 @@ struct dentry *debugfs_create_dir(const char *name, struct dentry *parent);
 struct dentry *debugfs_create_symlink(const char *name, struct dentry *parent,
 				      const char *dest);
 
+typedef struct vfsmount *(*debugfs_automount_t)(struct dentry *, void *);
 struct dentry *debugfs_create_automount(const char *name,
 					struct dentry *parent,
-					struct vfsmount *(*f)(void *),
+					debugfs_automount_t f,
 					void *data);
 
 void debugfs_remove(struct dentry *dentry);
 void debugfs_remove_recursive(struct dentry *dentry);
+
+const struct file_operations *debugfs_real_fops(const struct file *filp);
+
+int debugfs_file_get(struct dentry *dentry);
+void debugfs_file_put(struct dentry *dentry);
+
+ssize_t debugfs_attr_read(struct file *file, char __user *buf,
+			size_t len, loff_t *ppos);
+ssize_t debugfs_attr_write(struct file *file, const char __user *buf,
+			size_t len, loff_t *ppos);
 
 struct dentry *debugfs_rename(struct dentry *old_dir, struct dentry *old_dentry,
                 struct dentry *new_dir, const char *new_name);
@@ -80,6 +105,8 @@ struct dentry *debugfs_create_u32(const char *name, umode_t mode,
 				  struct dentry *parent, u32 *value);
 struct dentry *debugfs_create_u64(const char *name, umode_t mode,
 				  struct dentry *parent, u64 *value);
+struct dentry *debugfs_create_ulong(const char *name, umode_t mode,
+				    struct dentry *parent, unsigned long *value);
 struct dentry *debugfs_create_x8(const char *name, umode_t mode,
 				 struct dentry *parent, u8 *value);
 struct dentry *debugfs_create_x16(const char *name, umode_t mode,
@@ -93,7 +120,7 @@ struct dentry *debugfs_create_size_t(const char *name, umode_t mode,
 struct dentry *debugfs_create_atomic_t(const char *name, umode_t mode,
 				     struct dentry *parent, atomic_t *value);
 struct dentry *debugfs_create_bool(const char *name, umode_t mode,
-				  struct dentry *parent, u32 *value);
+				  struct dentry *parent, bool *value);
 
 struct dentry *debugfs_create_blob(const char *name, umode_t mode,
 				  struct dentry *parent,
@@ -117,6 +144,12 @@ struct dentry *debugfs_create_devm_seqfile(struct device *dev, const char *name,
 
 bool debugfs_initialized(void);
 
+ssize_t debugfs_read_file_bool(struct file *file, char __user *user_buf,
+			       size_t count, loff_t *ppos);
+
+ssize_t debugfs_write_file_bool(struct file *file, const char __user *user_buf,
+				size_t count, loff_t *ppos);
+
 #else
 
 #include <linux/err.h>
@@ -127,8 +160,22 @@ bool debugfs_initialized(void);
  * want to duplicate the design decision mistakes of procfs and devfs again.
  */
 
+static inline struct dentry *debugfs_lookup(const char *name,
+					    struct dentry *parent)
+{
+	return ERR_PTR(-ENODEV);
+}
+
 static inline struct dentry *debugfs_create_file(const char *name, umode_t mode,
 					struct dentry *parent, void *data,
+					const struct file_operations *fops)
+{
+	return ERR_PTR(-ENODEV);
+}
+
+static inline struct dentry *debugfs_create_file_unsafe(const char *name,
+					umode_t mode, struct dentry *parent,
+					void *data,
 					const struct file_operations *fops)
 {
 	return ERR_PTR(-ENODEV);
@@ -155,11 +202,42 @@ static inline struct dentry *debugfs_create_symlink(const char *name,
 	return ERR_PTR(-ENODEV);
 }
 
+static inline struct dentry *debugfs_create_automount(const char *name,
+					struct dentry *parent,
+					struct vfsmount *(*f)(void *),
+					void *data)
+{
+	return ERR_PTR(-ENODEV);
+}
+
 static inline void debugfs_remove(struct dentry *dentry)
 { }
 
 static inline void debugfs_remove_recursive(struct dentry *dentry)
 { }
+
+const struct file_operations *debugfs_real_fops(const struct file *filp);
+
+static inline int debugfs_file_get(struct dentry *dentry)
+{
+	return 0;
+}
+
+static inline void debugfs_file_put(struct dentry *dentry)
+{ }
+
+static inline ssize_t debugfs_attr_read(struct file *file, char __user *buf,
+					size_t len, loff_t *ppos)
+{
+	return -ENODEV;
+}
+
+static inline ssize_t debugfs_attr_write(struct file *file,
+					const char __user *buf,
+					size_t len, loff_t *ppos)
+{
+	return -ENODEV;
+}
 
 static inline struct dentry *debugfs_rename(struct dentry *old_dir, struct dentry *old_dentry,
                 struct dentry *new_dir, char *new_name)
@@ -191,6 +269,14 @@ static inline struct dentry *debugfs_create_u32(const char *name, umode_t mode,
 static inline struct dentry *debugfs_create_u64(const char *name, umode_t mode,
 						struct dentry *parent,
 						u64 *value)
+{
+	return ERR_PTR(-ENODEV);
+}
+
+static inline struct dentry *debugfs_create_ulong(const char *name,
+						umode_t mode,
+						struct dentry *parent,
+						unsigned long *value)
 {
 	return ERR_PTR(-ENODEV);
 }
@@ -238,7 +324,7 @@ static inline struct dentry *debugfs_create_atomic_t(const char *name, umode_t m
 
 static inline struct dentry *debugfs_create_bool(const char *name, umode_t mode,
 						 struct dentry *parent,
-						 u32 *value)
+						 bool *value)
 {
 	return ERR_PTR(-ENODEV);
 }
@@ -281,6 +367,20 @@ static inline struct dentry *debugfs_create_devm_seqfile(struct device *dev,
 							  void *data))
 {
 	return ERR_PTR(-ENODEV);
+}
+
+static inline ssize_t debugfs_read_file_bool(struct file *file,
+					     char __user *user_buf,
+					     size_t count, loff_t *ppos)
+{
+	return -ENODEV;
+}
+
+static inline ssize_t debugfs_write_file_bool(struct file *file,
+					      const char __user *user_buf,
+					      size_t count, loff_t *ppos)
+{
+	return -ENODEV;
 }
 
 #endif

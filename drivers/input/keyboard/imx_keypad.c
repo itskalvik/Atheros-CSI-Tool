@@ -5,8 +5,6 @@
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation.
- *
- * <<Power management needs to be implemented>>.
  */
 
 #include <linux/clk.h>
@@ -186,9 +184,9 @@ static void imx_keypad_fire_events(struct imx_keypad *keypad,
 /*
  * imx_keypad_check_for_events is the timer handler.
  */
-static void imx_keypad_check_for_events(unsigned long data)
+static void imx_keypad_check_for_events(struct timer_list *t)
 {
-	struct imx_keypad *keypad = (struct imx_keypad *) data;
+	struct imx_keypad *keypad = from_timer(keypad, t, check_matrix_timer);
 	unsigned short matrix_volatile_state[MAX_MATRIX_KEY_COLS];
 	unsigned short reg_val;
 	bool state_changed, is_zero_matrix;
@@ -458,8 +456,8 @@ static int imx_keypad_probe(struct platform_device *pdev)
 	keypad->irq = irq;
 	keypad->stable_count = 0;
 
-	setup_timer(&keypad->check_matrix_timer,
-		    imx_keypad_check_for_events, (unsigned long) keypad);
+	timer_setup(&keypad->check_matrix_timer,
+		    imx_keypad_check_for_events, 0);
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	keypad->mmio_base = devm_ioremap_resource(&pdev->dev, res);
@@ -506,7 +504,9 @@ static int imx_keypad_probe(struct platform_device *pdev)
 	input_set_drvdata(input_dev, keypad);
 
 	/* Ensure that the keypad will stay dormant until opened */
-	clk_prepare_enable(keypad->clk);
+	error = clk_prepare_enable(keypad->clk);
+	if (error)
+		return error;
 	imx_keypad_inhibit(keypad);
 	clk_disable_unprepare(keypad->clk);
 

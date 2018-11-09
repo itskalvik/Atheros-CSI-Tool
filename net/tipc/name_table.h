@@ -39,6 +39,8 @@
 
 struct tipc_subscription;
 struct tipc_plist;
+struct tipc_nlist;
+struct tipc_group;
 
 /*
  * TIPC name types reserved for internal TIPC use (both current and planned)
@@ -99,7 +101,15 @@ int tipc_nl_name_table_dump(struct sk_buff *skb, struct netlink_callback *cb);
 
 u32 tipc_nametbl_translate(struct net *net, u32 type, u32 instance, u32 *node);
 int tipc_nametbl_mc_translate(struct net *net, u32 type, u32 lower, u32 upper,
-			      u32 limit, struct tipc_plist *dports);
+			      u32 limit, struct list_head *dports);
+void tipc_nametbl_build_group(struct net *net, struct tipc_group *grp,
+			      u32 type, u32 domain);
+void tipc_nametbl_lookup_dst_nodes(struct net *net, u32 type, u32 lower,
+				   u32 upper, u32 domain,
+				   struct tipc_nlist *nodes);
+bool tipc_nametbl_lookup(struct net *net, u32 type, u32 instance, u32 domain,
+			 struct list_head *dsts, int *dstcnt, u32 exclude,
+			 bool all);
 struct publication *tipc_nametbl_publish(struct net *net, u32 type, u32 lower,
 					 u32 upper, u32 scope, u32 port_ref,
 					 u32 key);
@@ -116,18 +126,22 @@ void tipc_nametbl_unsubscribe(struct tipc_subscription *s);
 int tipc_nametbl_init(struct net *net);
 void tipc_nametbl_stop(struct net *net);
 
-struct tipc_plist {
+struct tipc_dest {
 	struct list_head list;
-	u32 port;
+	union {
+		struct {
+			u32 port;
+			u32 node;
+		};
+		u64 value;
+	};
 };
 
-static inline void tipc_plist_init(struct tipc_plist *pl)
-{
-	INIT_LIST_HEAD(&pl->list);
-	pl->port = 0;
-}
-
-void tipc_plist_push(struct tipc_plist *pl, u32 port);
-u32 tipc_plist_pop(struct tipc_plist *pl);
+struct tipc_dest *tipc_dest_find(struct list_head *l, u32 node, u32 port);
+bool tipc_dest_push(struct list_head *l, u32 node, u32 port);
+bool tipc_dest_pop(struct list_head *l, u32 *node, u32 *port);
+bool tipc_dest_del(struct list_head *l, u32 node, u32 port);
+void tipc_dest_list_purge(struct list_head *l);
+int tipc_dest_list_len(struct list_head *l);
 
 #endif

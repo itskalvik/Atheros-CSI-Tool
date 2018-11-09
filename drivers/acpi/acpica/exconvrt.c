@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2015, Intel Corp.
+ * Copyright (C) 2000 - 2017, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -57,10 +57,10 @@ acpi_ex_convert_to_ascii(u64 integer, u16 base, u8 *string, u8 max_length);
  *
  * FUNCTION:    acpi_ex_convert_to_integer
  *
- * PARAMETERS:  obj_desc        - Object to be converted. Must be an
- *                                Integer, Buffer, or String
- *              result_desc     - Where the new Integer object is returned
- *              flags           - Used for string conversion
+ * PARAMETERS:  obj_desc            - Object to be converted. Must be an
+ *                                    Integer, Buffer, or String
+ *              result_desc         - Where the new Integer object is returned
+ *              implicit_conversion - Used for string conversion
  *
  * RETURN:      Status
  *
@@ -70,14 +70,14 @@ acpi_ex_convert_to_ascii(u64 integer, u16 base, u8 *string, u8 max_length);
 
 acpi_status
 acpi_ex_convert_to_integer(union acpi_operand_object *obj_desc,
-			   union acpi_operand_object **result_desc, u32 flags)
+			   union acpi_operand_object **result_desc,
+			   u32 implicit_conversion)
 {
 	union acpi_operand_object *return_desc;
 	u8 *pointer;
 	u64 result;
 	u32 i;
 	u32 count;
-	acpi_status status;
 
 	ACPI_FUNCTION_TRACE_PTR(ex_convert_to_integer, obj_desc);
 
@@ -123,10 +123,18 @@ acpi_ex_convert_to_integer(union acpi_operand_object *obj_desc,
 		 * hexadecimal as per the ACPI specification. The only exception (as
 		 * of ACPI 3.0) is that the to_integer() operator allows both decimal
 		 * and hexadecimal strings (hex prefixed with "0x").
+		 *
+		 * Explicit conversion is used only by to_integer.
+		 * All other string-to-integer conversions are implicit conversions.
 		 */
-		status = acpi_ut_strtoul64((char *)pointer, flags, &result);
-		if (ACPI_FAILURE(status)) {
-			return_ACPI_STATUS(status);
+		if (implicit_conversion) {
+			result =
+			    acpi_ut_implicit_strtoul64(ACPI_CAST_PTR
+						       (char, pointer));
+		} else {
+			result =
+			    acpi_ut_explicit_strtoul64(ACPI_CAST_PTR
+						       (char, pointer));
 		}
 		break;
 
@@ -227,9 +235,8 @@ acpi_ex_convert_to_buffer(union acpi_operand_object *obj_desc,
 		/* Copy the integer to the buffer, LSB first */
 
 		new_buf = return_desc->buffer.pointer;
-		ACPI_MEMCPY(new_buf,
-			    &obj_desc->integer.value,
-			    acpi_gbl_integer_byte_width);
+		memcpy(new_buf, &obj_desc->integer.value,
+		       acpi_gbl_integer_byte_width);
 		break;
 
 	case ACPI_TYPE_STRING:
@@ -252,8 +259,8 @@ acpi_ex_convert_to_buffer(union acpi_operand_object *obj_desc,
 		/* Copy the string to the buffer */
 
 		new_buf = return_desc->buffer.pointer;
-		ACPI_STRNCPY((char *)new_buf, (char *)obj_desc->string.pointer,
-			     obj_desc->string.length);
+		strncpy((char *)new_buf, (char *)obj_desc->string.pointer,
+			obj_desc->string.length);
 		break;
 
 	default:
@@ -355,9 +362,8 @@ acpi_ex_convert_to_ascii(u64 integer, u16 base, u8 *string, u8 data_width)
 
 			/* Get one hex digit, most significant digits first */
 
-			string[k] =
-			    (u8) acpi_ut_hex_to_ascii_char(integer,
-							   ACPI_MUL_4(j));
+			string[k] = (u8)
+			    acpi_ut_hex_to_ascii_char(integer, ACPI_MUL_4(j));
 			k++;
 		}
 		break;
@@ -441,7 +447,7 @@ acpi_ex_convert_to_string(union acpi_operand_object * obj_desc,
 		 * Need enough space for one ASCII integer (plus null terminator)
 		 */
 		return_desc =
-		    acpi_ut_create_string_object((acpi_size) string_length);
+		    acpi_ut_create_string_object((acpi_size)string_length);
 		if (!return_desc) {
 			return_ACPI_STATUS(AE_NO_MEMORY);
 		}
@@ -520,7 +526,7 @@ acpi_ex_convert_to_string(union acpi_operand_object * obj_desc,
 		}
 
 		return_desc =
-		    acpi_ut_create_string_object((acpi_size) string_length);
+		    acpi_ut_create_string_object((acpi_size)string_length);
 		if (!return_desc) {
 			return_ACPI_STATUS(AE_NO_MEMORY);
 		}
@@ -592,7 +598,6 @@ acpi_ex_convert_to_target_type(acpi_object_type destination_type,
 	 */
 	switch (GET_CURRENT_ARG_TYPE(walk_state->op_info->runtime_args)) {
 	case ARGI_SIMPLE_TARGET:
-	case ARGI_FIXED_TARGET:
 	case ARGI_INTEGER_REF:	/* Handles Increment, Decrement cases */
 
 		switch (destination_type) {
@@ -619,6 +624,7 @@ acpi_ex_convert_to_target_type(acpi_object_type destination_type,
 		break;
 
 	case ARGI_TARGETREF:
+	case ARGI_STORE_TARGET:
 
 		switch (destination_type) {
 		case ACPI_TYPE_INTEGER:
@@ -631,7 +637,7 @@ acpi_ex_convert_to_target_type(acpi_object_type destination_type,
 			 */
 			status =
 			    acpi_ex_convert_to_integer(source_desc, result_desc,
-						       16);
+						       ACPI_IMPLICIT_CONVERSION);
 			break;
 
 		case ACPI_TYPE_STRING:

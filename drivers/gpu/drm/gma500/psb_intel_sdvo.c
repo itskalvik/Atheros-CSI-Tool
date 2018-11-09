@@ -37,6 +37,7 @@
 #include "psb_drv.h"
 #include "psb_intel_sdvo_regs.h"
 #include "psb_intel_reg.h"
+#include <linux/kernel.h>
 
 #define SDVO_TMDS_MASK (SDVO_OUTPUT_TMDS0 | SDVO_OUTPUT_TMDS1)
 #define SDVO_RGB_MASK  (SDVO_OUTPUT_RGB0 | SDVO_OUTPUT_RGB1)
@@ -61,8 +62,6 @@ static const char *tv_format_names[] = {
 	"SECAM_K"  , "SECAM_K1", "SECAM_L" ,
 	"SECAM_60"
 };
-
-#define TV_FORMAT_NUM  (sizeof(tv_format_names) / sizeof(*tv_format_names))
 
 struct psb_intel_sdvo {
 	struct gma_encoder base;
@@ -148,7 +147,7 @@ struct psb_intel_sdvo_connector {
 	int force_audio;
 
 	/* This contains all current supported TV format */
-	u8 tv_format_supported[TV_FORMAT_NUM];
+	u8 tv_format_supported[ARRAY_SIZE(tv_format_names)];
 	int   format_supported_num;
 	struct drm_property *tv_format;
 
@@ -1709,7 +1708,7 @@ psb_intel_sdvo_set_property(struct drm_connector *connector,
 	}
 
 	if (property == psb_intel_sdvo_connector->tv_format) {
-		if (val >= TV_FORMAT_NUM)
+		if (val >= ARRAY_SIZE(tv_format_names))
 			return -EINVAL;
 
 		if (psb_intel_sdvo->tv_format_index ==
@@ -1837,8 +1836,6 @@ static const struct drm_encoder_helper_funcs psb_intel_sdvo_helper_funcs = {
 
 static const struct drm_connector_funcs psb_intel_sdvo_connector_funcs = {
 	.dpms = drm_helper_connector_dpms,
-	.save = psb_intel_sdvo_save,
-	.restore = psb_intel_sdvo_restore,
 	.detect = psb_intel_sdvo_detect,
 	.fill_modes = drm_helper_probe_single_connector_modes,
 	.set_property = psb_intel_sdvo_set_property,
@@ -2020,6 +2017,9 @@ psb_intel_sdvo_connector_init(struct psb_intel_sdvo_connector *connector,
 	connector->base.base.interlace_allowed = 0;
 	connector->base.base.doublescan_allowed = 0;
 	connector->base.base.display_info.subpixel_order = SubPixelHorizontalRGB;
+
+	connector->base.save = psb_intel_sdvo_save;
+	connector->base.restore = psb_intel_sdvo_restore;
 
 	gma_connector_attach_encoder(&connector->base, &encoder->base);
 	drm_connector_register(&connector->base.base);
@@ -2268,7 +2268,7 @@ static bool psb_intel_sdvo_tv_create_property(struct psb_intel_sdvo *psb_intel_s
 		return false;
 
 	psb_intel_sdvo_connector->format_supported_num = 0;
-	for (i = 0 ; i < TV_FORMAT_NUM; i++)
+	for (i = 0 ; i < ARRAY_SIZE(tv_format_names); i++)
 		if (format_map & (1 << i))
 			psb_intel_sdvo_connector->tv_format_supported[psb_intel_sdvo_connector->format_supported_num++] = i;
 
@@ -2525,7 +2525,8 @@ bool psb_intel_sdvo_init(struct drm_device *dev, int sdvo_reg)
 	/* encoder type will be decided later */
 	gma_encoder = &psb_intel_sdvo->base;
 	gma_encoder->type = INTEL_OUTPUT_SDVO;
-	drm_encoder_init(dev, &gma_encoder->base, &psb_intel_sdvo_enc_funcs, 0);
+	drm_encoder_init(dev, &gma_encoder->base, &psb_intel_sdvo_enc_funcs,
+			 0, NULL);
 
 	/* Read the regs to test if we can talk to the device */
 	for (i = 0; i < 0x40; i++) {

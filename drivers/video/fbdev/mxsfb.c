@@ -150,7 +150,7 @@
 #define STMLCDIF_24BIT 3 /** pixel data bus to the display is of 24 bit width */
 
 #define MXSFB_SYNC_DATA_ENABLE_HIGH_ACT	(1 << 6)
-#define MXSFB_SYNC_DOTCLK_FALLING_ACT	(1 << 7) /* negtive edge sampling */
+#define MXSFB_SYNC_DOTCLK_FALLING_ACT	(1 << 7) /* negative edge sampling */
 
 enum mxsfb_devtype {
 	MXSFB_V3,
@@ -788,7 +788,16 @@ static int mxsfb_init_fbinfo_dt(struct mxsfb_info *host,
 
 	if (vm.flags & DISPLAY_FLAGS_DE_HIGH)
 		host->sync |= MXSFB_SYNC_DATA_ENABLE_HIGH_ACT;
-	if (vm.flags & DISPLAY_FLAGS_PIXDATA_NEGEDGE)
+
+	/*
+	 * The PIXDATA flags of the display_flags enum are controller
+	 * centric, e.g. NEGEDGE means drive data on negative edge.
+	 * However, the drivers flag is display centric: Sample the
+	 * data on negative (falling) edge. Therefore, check for the
+	 * POSEDGE flag:
+	 * drive on positive edge => sample on negative edge
+	 */
+	if (vm.flags & DISPLAY_FLAGS_PIXDATA_POSEDGE)
 		host->sync |= MXSFB_SYNC_DOTCLK_FALLING_ACT;
 
 put_display_node:
@@ -800,6 +809,7 @@ static int mxsfb_init_fbinfo(struct mxsfb_info *host,
 			struct fb_videomode *vmode)
 {
 	int ret;
+	struct device *dev = &host->pdev->dev;
 	struct fb_info *fb_info = &host->fb_info;
 	struct fb_var_screeninfo *var = &fb_info->var;
 	dma_addr_t fb_phys;
@@ -825,11 +835,9 @@ static int mxsfb_init_fbinfo(struct mxsfb_info *host,
 
 	/* Memory allocation for framebuffer */
 	fb_size = SZ_2M;
-	fb_virt = alloc_pages_exact(fb_size, GFP_DMA);
+	fb_virt = dma_alloc_wc(dev, PAGE_ALIGN(fb_size), &fb_phys, GFP_KERNEL);
 	if (!fb_virt)
 		return -ENOMEM;
-
-	fb_phys = virt_to_phys(fb_virt);
 
 	fb_info->fix.smem_start = fb_phys;
 	fb_info->screen_base = fb_virt;
@@ -843,12 +851,14 @@ static int mxsfb_init_fbinfo(struct mxsfb_info *host,
 
 static void mxsfb_free_videomem(struct mxsfb_info *host)
 {
+	struct device *dev = &host->pdev->dev;
 	struct fb_info *fb_info = &host->fb_info;
 
-	free_pages_exact(fb_info->screen_base, fb_info->fix.smem_len);
+	dma_free_wc(dev, fb_info->screen_size, fb_info->screen_base,
+		    fb_info->fix.smem_start);
 }
 
-static struct platform_device_id mxsfb_devtype[] = {
+static const struct platform_device_id mxsfb_devtype[] = {
 	{
 		.name = "imx23-fb",
 		.driver_data = MXSFB_V3,

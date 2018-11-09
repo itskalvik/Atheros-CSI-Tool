@@ -252,7 +252,6 @@ static int ad5686_write_raw(struct iio_dev *indio_dev,
 static const struct iio_info ad5686_info = {
 	.read_raw = ad5686_read_raw,
 	.write_raw = ad5686_write_raw,
-	.driver_module = THIS_MODULE,
 };
 
 static const struct iio_chan_spec_ext_info ad5686_ext_info[] = {
@@ -395,7 +394,6 @@ MODULE_DEVICE_TABLE(spi, ad5686_id);
 static struct spi_driver ad5686_driver = {
 	.driver = {
 		   .name = "ad5686",
-		   .owner = THIS_MODULE,
 		   },
 	.probe = ad5686_probe,
 	.remove = ad5686_remove,

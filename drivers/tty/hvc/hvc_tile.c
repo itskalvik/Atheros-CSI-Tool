@@ -1,15 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright 2010 Tilera Corporation. All Rights Reserved.
- *
- *   This program is free software; you can redistribute it and/or
- *   modify it under the terms of the GNU General Public License
- *   as published by the Free Software Foundation, version 2.
- *
- *   This program is distributed in the hope that it will be useful, but
- *   WITHOUT ANY WARRANTY; without even the implied warranty of
- *   MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, GOOD TITLE or
- *   NON INFRINGEMENT.  See the GNU General Public License for
- *   more details.
  *
  * Tilera TILE Processor hypervisor console
  */
@@ -51,7 +42,8 @@ int tile_console_write(const char *buf, int count)
 			      _SIM_CONTROL_OPERATOR_BITS));
 		return 0;
 	} else {
-		return hv_console_write((HV_VirtAddr)buf, count);
+		/* Translate 0 bytes written to EAGAIN for hvc_console_print. */
+		return hv_console_write((HV_VirtAddr)buf, count) ?: -EAGAIN;
 	}
 }
 

@@ -1,22 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * opal driver interface to hvc_console.c
  *
  * Copyright 2011 Benjamin Herrenschmidt <benh@kernel.crashing.org>, IBM Corp.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
- *
  */
 
 #undef DEBUG
@@ -29,6 +15,7 @@
 #include <linux/of.h>
 #include <linux/of_platform.h>
 #include <linux/export.h>
+#include <linux/interrupt.h>
 
 #include <asm/hvconsole.h>
 #include <asm/prom.h>
@@ -61,7 +48,6 @@ static struct hvc_opal_priv *hvc_opal_privs[MAX_NR_HVC_CONSOLES];
 /* For early boot console */
 static struct hvc_opal_priv hvc_opal_boot_priv;
 static u32 hvc_opal_boot_termno;
-static bool hvc_opal_event_registered;
 
 static const struct hv_ops hvc_opal_raw_ops = {
 	.get_chars = opal_get_chars,
@@ -162,27 +148,14 @@ static const struct hv_ops hvc_opal_hvsi_ops = {
 	.tiocmset = hvc_opal_hvsi_tiocmset,
 };
 
-static int hvc_opal_console_event(struct notifier_block *nb,
-				  unsigned long events, void *change)
-{
-	if (events & OPAL_EVENT_CONSOLE_INPUT)
-		hvc_kick();
-	return 0;
-}
-
-static struct notifier_block hvc_opal_console_nb = {
-	.notifier_call	= hvc_opal_console_event,
-};
-
 static int hvc_opal_probe(struct platform_device *dev)
 {
 	const struct hv_ops *ops;
 	struct hvc_struct *hp;
 	struct hvc_opal_priv *pv;
 	hv_protocol_t proto;
-	unsigned int termno, boot = 0;
+	unsigned int termno, irq, boot = 0;
 	const __be32 *reg;
-
 
 	if (of_device_is_compatible(dev->dev.of_node, "ibm,opal-console-raw")) {
 		proto = HV_PROTOCOL_RAW;
@@ -192,8 +165,8 @@ static int hvc_opal_probe(struct platform_device *dev)
 		proto = HV_PROTOCOL_HVSI;
 		ops = &hvc_opal_hvsi_ops;
 	} else {
-		pr_err("hvc_opal: Unknown protocol for %s\n",
-		       dev->dev.of_node->full_name);
+		pr_err("hvc_opal: Unknown protocol for %pOF\n",
+		       dev->dev.of_node);
 		return -ENXIO;
 	}
 
@@ -217,27 +190,36 @@ static int hvc_opal_probe(struct platform_device *dev)
 		/* Instanciate now to establish a mapping index==vtermno */
 		hvc_instantiate(termno, termno, ops);
 	} else {
-		pr_err("hvc_opal: Device %s has duplicate terminal number #%d\n",
-		       dev->dev.of_node->full_name, termno);
+		pr_err("hvc_opal: Device %pOF has duplicate terminal number #%d\n",
+		       dev->dev.of_node, termno);
 		return -ENXIO;
 	}
 
-	pr_info("hvc%d: %s protocol on %s%s\n", termno,
+	pr_info("hvc%d: %s protocol on %pOF%s\n", termno,
 		proto == HV_PROTOCOL_RAW ? "raw" : "hvsi",
-		dev->dev.of_node->full_name,
+		dev->dev.of_node,
 		boot ? " (boot console)" : "");
 
-	/* We don't do IRQ ... */
-	hp = hvc_alloc(termno, 0, ops, MAX_VIO_PUT_CHARS);
+	irq = irq_of_parse_and_map(dev->dev.of_node, 0);
+	if (!irq) {
+		pr_info("hvc%d: No interrupts property, using OPAL event\n",
+				termno);
+		irq = opal_event_request(ilog2(OPAL_EVENT_CONSOLE_INPUT));
+	}
+
+	if (!irq) {
+		pr_err("hvc_opal: Unable to map interrupt for device %pOF\n",
+			dev->dev.of_node);
+		return irq;
+	}
+
+	hp = hvc_alloc(termno, irq, ops, MAX_VIO_PUT_CHARS);
 	if (IS_ERR(hp))
 		return PTR_ERR(hp);
-	dev_set_drvdata(&dev->dev, hp);
 
-	/* ...  but we use OPAL event to kick the console */
-	if (!hvc_opal_event_registered) {
-		opal_notifier_register(&hvc_opal_console_nb);
-		hvc_opal_event_registered = true;
-	}
+	/* hvc consoles on powernv may need to share a single irq */
+	hp->flags = IRQF_SHARED;
+	dev_set_drvdata(&dev->dev, hp);
 
 	return 0;
 }

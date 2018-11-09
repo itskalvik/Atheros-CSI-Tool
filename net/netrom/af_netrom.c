@@ -17,7 +17,7 @@
 #include <linux/in.h>
 #include <linux/slab.h>
 #include <linux/kernel.h>
-#include <linux/sched.h>
+#include <linux/sched/signal.h>
 #include <linux/timer.h>
 #include <linux/string.h>
 #include <linux/sockios.h>
@@ -241,9 +241,9 @@ void nr_destroy_socket(struct sock *);
 /*
  *	Handler for deferred kills.
  */
-static void nr_destroy_timer(unsigned long data)
+static void nr_destroy_timer(struct timer_list *t)
 {
-	struct sock *sk=(struct sock *)data;
+	struct sock *sk = from_timer(sk, t, sk_timer);
 	bh_lock_sock(sk);
 	sock_hold(sk);
 	nr_destroy_socket(sk);
@@ -433,7 +433,7 @@ static int nr_create(struct net *net, struct socket *sock, int protocol,
 	if (sock->type != SOCK_SEQPACKET || protocol != 0)
 		return -ESOCKTNOSUPPORT;
 
-	sk = sk_alloc(net, PF_NETROM, GFP_ATOMIC, &nr_proto);
+	sk = sk_alloc(net, PF_NETROM, GFP_ATOMIC, &nr_proto, kern);
 	if (sk  == NULL)
 		return -ENOMEM;
 
@@ -476,7 +476,7 @@ static struct sock *nr_make_new(struct sock *osk)
 	if (osk->sk_type != SOCK_SEQPACKET)
 		return NULL;
 
-	sk = sk_alloc(sock_net(osk), PF_NETROM, GFP_ATOMIC, osk->sk_prot);
+	sk = sk_alloc(sock_net(osk), PF_NETROM, GFP_ATOMIC, osk->sk_prot, 0);
 	if (sk == NULL)
 		return NULL;
 
@@ -765,7 +765,8 @@ out_release:
 	return err;
 }
 
-static int nr_accept(struct socket *sock, struct socket *newsock, int flags)
+static int nr_accept(struct socket *sock, struct socket *newsock, int flags,
+		     bool kern)
 {
 	struct sk_buff *skb;
 	struct sock *newsk;

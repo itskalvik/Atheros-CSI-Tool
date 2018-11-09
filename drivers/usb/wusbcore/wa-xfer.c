@@ -1,24 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * WUSB Wire Adapter
  * Data transfer and URB enqueing
  *
  * Copyright (C) 2005-2006 Intel Corporation
  * Inaky Perez-Gonzalez <inaky.perez-gonzalez@intel.com>
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License version
- * 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
- *
  *
  * How transfers work: get a buffer, break it up in segments (segment
  * size is a multiple of the maxpacket size). For each segment issue a
@@ -1203,6 +1189,7 @@ static int __wa_xfer_setup_segs(struct wa_xfer *xfer, size_t xfer_hdr_size)
 				sizeof(struct wa_xfer_packet_info_hwaiso) +
 				(seg_isoc_frame_count * sizeof(__le16));
 		}
+		result = -ENOMEM;
 		seg = xfer->seg[cnt] = kmalloc(alloc_size + iso_pkt_descr_size,
 						GFP_ATOMIC);
 		if (seg == NULL)
@@ -2155,6 +2142,7 @@ static void wa_complete_remaining_xfer_segs(struct wa_xfer *xfer,
 		 * do not increment RPIPE avail for the WA_SEG_DELAYED case
 		 * since it has not been submitted to the RPIPE.
 		 */
+		/* fall through */
 		case WA_SEG_DELAYED:
 			xfer->segs_done++;
 			current_seg->status = status;
@@ -2865,10 +2853,8 @@ int wa_dti_start(struct wahc *wa)
 		goto out;
 
 	wa->dti_urb = usb_alloc_urb(0, GFP_KERNEL);
-	if (wa->dti_urb == NULL) {
-		dev_err(dev, "Can't allocate DTI URB\n");
+	if (wa->dti_urb == NULL)
 		goto error_dti_urb_alloc;
-	}
 	usb_fill_bulk_urb(
 		wa->dti_urb, wa->usb_dev,
 		usb_rcvbulkpipe(wa->usb_dev, 0x80 | dti_epd->bEndpointAddress),

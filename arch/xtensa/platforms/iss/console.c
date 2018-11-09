@@ -20,17 +20,13 @@
 #include <linux/seq_file.h>
 #include <linux/serial.h>
 
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #include <asm/irq.h>
 
 #include <platform/simcall.h>
 
 #include <linux/tty.h>
 #include <linux/tty_flip.h>
-
-#ifdef SERIAL_INLINE
-#define _INLINE_ inline
-#endif
 
 #define SERIAL_MAX_NUM_LINES 1
 #define SERIAL_TIMER_VALUE (HZ / 10)
@@ -51,15 +47,14 @@ static char *serial_name = "ISS serial driver";
  * initialization for the tty structure.
  */
 
-static void rs_poll(unsigned long);
+static void rs_poll(struct timer_list *);
 
 static int rs_open(struct tty_struct *tty, struct file * filp)
 {
 	tty->port = &serial_port;
 	spin_lock_bh(&timer_lock);
 	if (tty->count == 1) {
-		setup_timer(&serial_timer, rs_poll,
-				(unsigned long)&serial_port);
+		timer_setup(&serial_timer, rs_poll, 0);
 		mod_timer(&serial_timer, jiffies + SERIAL_TIMER_VALUE);
 	}
 	spin_unlock_bh(&timer_lock);
@@ -96,25 +91,27 @@ static int rs_write(struct tty_struct * tty,
 	return count;
 }
 
-static void rs_poll(unsigned long priv)
+static void rs_poll(struct timer_list *unused)
 {
-	struct tty_port *port = (struct tty_port *)priv;
+	struct tty_port *port = &serial_port;
 	int i = 0;
+	int rd = 1;
 	unsigned char c;
 
 	spin_lock(&timer_lock);
 
 	while (simc_poll(0)) {
-		simc_read(0, &c, 1);
+		rd = simc_read(0, &c, 1);
+		if (rd <= 0)
+			break;
 		tty_insert_flip_char(port, c, TTY_NORMAL);
 		i++;
 	}
 
 	if (i)
 		tty_flip_buffer_push(port);
-
-
-	mod_timer(&serial_timer, jiffies + SERIAL_TIMER_VALUE);
+	if (rd)
+		mod_timer(&serial_timer, jiffies + SERIAL_TIMER_VALUE);
 	spin_unlock(&timer_lock);
 }
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Base infrastructure for Linux-z/VM Monitor Stream, Stage 1.
  * Exports appldata_register_ops() and appldata_unregister_ops() for the
@@ -12,6 +13,7 @@
 #define pr_fmt(fmt) KMSG_COMPONENT ": " fmt
 
 #include <linux/module.h>
+#include <linux/sched/stat.h>
 #include <linux/init.h>
 #include <linux/slab.h>
 #include <linux/errno.h>
@@ -28,7 +30,7 @@
 #include <linux/platform_device.h>
 #include <asm/appldata.h>
 #include <asm/vtimer.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #include <asm/io.h>
 #include <asm/smp.h>
 
@@ -542,7 +544,7 @@ static int __init appldata_init(void)
 		rc = PTR_ERR(appldata_pdev);
 		goto out_driver;
 	}
-	appldata_wq = create_singlethread_workqueue("appldata");
+	appldata_wq = alloc_ordered_workqueue("appldata", 0);
 	if (!appldata_wq) {
 		rc = -ENOMEM;
 		goto out_device;

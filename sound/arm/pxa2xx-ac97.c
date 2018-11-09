@@ -15,6 +15,7 @@
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/dmaengine.h>
+#include <linux/dma/pxa-dma.h>
 
 #include <sound/core.h>
 #include <sound/pcm.h>
@@ -28,22 +29,45 @@
 
 #include "pxa2xx-pcm.h"
 
-static void pxa2xx_ac97_reset(struct snd_ac97 *ac97)
+static void pxa2xx_ac97_legacy_reset(struct snd_ac97 *ac97)
 {
-	if (!pxa2xx_ac97_try_cold_reset(ac97)) {
-		pxa2xx_ac97_try_warm_reset(ac97);
-	}
+	if (!pxa2xx_ac97_try_cold_reset())
+		pxa2xx_ac97_try_warm_reset();
 
-	pxa2xx_ac97_finish_reset(ac97);
+	pxa2xx_ac97_finish_reset();
+}
+
+static unsigned short pxa2xx_ac97_legacy_read(struct snd_ac97 *ac97,
+					      unsigned short reg)
+{
+	int ret;
+
+	ret = pxa2xx_ac97_read(ac97->num, reg);
+	if (ret < 0)
+		return 0;
+	else
+		return (unsigned short)(ret & 0xffff);
+}
+
+static void pxa2xx_ac97_legacy_write(struct snd_ac97 *ac97,
+				     unsigned short reg, unsigned short val)
+{
+	int __always_unused ret;
+
+	ret = pxa2xx_ac97_write(ac97->num, reg, val);
 }
 
 static struct snd_ac97_bus_ops pxa2xx_ac97_ops = {
-	.read	= pxa2xx_ac97_read,
-	.write	= pxa2xx_ac97_write,
-	.reset	= pxa2xx_ac97_reset,
+	.read	= pxa2xx_ac97_legacy_read,
+	.write	= pxa2xx_ac97_legacy_write,
+	.reset	= pxa2xx_ac97_legacy_reset,
 };
 
-static unsigned long pxa2xx_ac97_pcm_out_req = 12;
+static struct pxad_param pxa2xx_ac97_pcm_out_req = {
+	.prio = PXAD_PRIO_LOWEST,
+	.drcmr = 12,
+};
+
 static struct snd_dmaengine_dai_dma_data pxa2xx_ac97_pcm_out = {
 	.addr		= __PREG(PCDR),
 	.addr_width	= DMA_SLAVE_BUSWIDTH_4_BYTES,
@@ -51,7 +75,11 @@ static struct snd_dmaengine_dai_dma_data pxa2xx_ac97_pcm_out = {
 	.filter_data	= &pxa2xx_ac97_pcm_out_req,
 };
 
-static unsigned long pxa2xx_ac97_pcm_in_req = 11;
+static struct pxad_param pxa2xx_ac97_pcm_in_req = {
+	.prio = PXAD_PRIO_LOWEST,
+	.drcmr = 11,
+};
+
 static struct snd_dmaengine_dai_dma_data pxa2xx_ac97_pcm_in = {
 	.addr		= __PREG(PCDR),
 	.addr_width	= DMA_SLAVE_BUSWIDTH_4_BYTES,

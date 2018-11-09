@@ -25,7 +25,7 @@ Note: More extensive information for getting started with ext4 can be
 	
 	or
 
-    ftp://ftp.kernel.org/pub/linux/kernel/people/tytso/e2fsprogs/
+    https://www.kernel.org/pub/linux/kernel/people/tytso/e2fsprogs/
 
 	or grab the latest git repository from:
 
@@ -94,10 +94,10 @@ Note: More extensive information for getting started with ext4 can be
 * ability to pack bitmaps and inode tables into larger virtual groups via the
   flex_bg feature
 * large file support
-* Inode allocation using large virtual block groups via flex_bg
+* inode allocation using large virtual block groups via flex_bg
 * delayed allocation
 * large block (up to pagesize) support
-* efficient new ordered mode in JBD2 and ext4(avoid using buffer head to force
+* efficient new ordered mode in JBD2 and ext4 (avoid using buffer head to force
   the ordering)
 
 [1] Filesystems with a block size of 1k may see a limit imposed by the
@@ -105,7 +105,7 @@ directory hash tree having a maximum depth of two.
 
 2.2 Candidate features for future inclusion
 
-* Online defrag (patches available but not well tested)
+* online defrag (patches available but not well tested)
 * reduced mke2fs time via lazy itable initialization in conjunction with
   the uninit_bg feature (capability to do this is available in e2fsprogs
   but a kernel thread to do lazy zeroing of unused inode table blocks
@@ -351,14 +351,13 @@ nouid32			Disables 32-bit UIDs and GIDs.  This is for
 			interoperability  with  older kernels which only
 			store and expect 16-bit values.
 
-block_validity		This options allows to enables/disables the in-kernel
+block_validity(*)	These options enable or disable the in-kernel
 noblock_validity	facility for tracking filesystem metadata blocks
-			within internal data structures. This allows multi-
-			block allocator and other routines to quickly locate
-			extents which might overlap with filesystem metadata
-			blocks. This option is intended for debugging
-			purposes and since it negatively affects the
-			performance, it is off by default.
+			within internal data structures.  This allows multi-
+			block allocator and other routines to notice
+			bugs or corrupted allocation bitmaps which cause
+			blocks to be allocated which overlap with
+			filesystem metadata blocks.
 
 dioread_lock		Controls whether or not ext4 should use the DIO read
 dioread_nolock		locking. If the dioread_nolock option is specified
@@ -603,7 +602,7 @@ Table of Ext4 specific ioctls
 			      bitmaps and inode table, the userspace tool thus
 			      just passes the new number of blocks.
 
-EXT4_IOC_SWAP_BOOT	      Swap i_blocks and associated attributes
+ EXT4_IOC_SWAP_BOOT	      Swap i_blocks and associated attributes
 			      (like i_blocks, i_size, i_flags, ...) from
 			      the specified inode with inode
 			      EXT4_BOOT_LOADER_INO (#5). This is typically

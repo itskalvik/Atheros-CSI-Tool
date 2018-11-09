@@ -72,8 +72,8 @@ in this document, but drivers acting as clients to the GPIO interface must
 not care how it's implemented.)
 
 That said, if the convention is supported on their platform, drivers should
-use it when possible.  Platforms must select ARCH_REQUIRE_GPIOLIB or
-ARCH_WANT_OPTIONAL_GPIOLIB in their Kconfig.  Drivers that can't work without
+use it when possible.  Platforms must select GPIOLIB if GPIO functionality
+is strictly required.  Drivers that can't work without
 standard GPIO calls should have Kconfig entries which depend on GPIOLIB.  The
 GPIO calls are available, either as "real code" or as optimized-away stubs,
 when drivers use the include file:
@@ -273,8 +273,8 @@ easily, gating off unused clocks.
 
 For GPIOs that use pins known to the pinctrl subsystem, that subsystem should
 be informed of their use; a gpiolib driver's .request() operation may call
-pinctrl_request_gpio(), and a gpiolib driver's .free() operation may call
-pinctrl_free_gpio(). The pinctrl subsystem allows a pinctrl_request_gpio()
+pinctrl_gpio_request(), and a gpiolib driver's .free() operation may call
+pinctrl_gpio_free(). The pinctrl subsystem allows a pinctrl_gpio_request()
 to succeed concurrently with a pin or pingroup being "owned" by a device for
 pin multiplexing.
 
@@ -448,8 +448,8 @@ together with an optional gpio feature. We have already covered the
 case where e.g. a GPIO controller need to reserve a pin or set the
 direction of a pin by calling any of:
 
-pinctrl_request_gpio()
-pinctrl_free_gpio()
+pinctrl_gpio_request()
+pinctrl_gpio_free()
 pinctrl_gpio_direction_input()
 pinctrl_gpio_direction_output()
 
@@ -459,14 +459,14 @@ pin controller?
 
 This is done by registering "ranges" of pins, which are essentially
 cross-reference tables. These are described in
-Documentation/pinctrl.txt
+Documentation/driver-api/pinctl.rst
 
 While the pin allocation is totally managed by the pinctrl subsystem,
 gpio (under gpiolib) is still maintained by gpio drivers. It may happen
 that different pin ranges in a SoC is managed by different gpio drivers.
 
 This makes it logical to let gpio drivers announce their pin ranges to
-the pin ctrl subsystem before it will call 'pinctrl_request_gpio' in order
+the pin ctrl subsystem before it will call 'pinctrl_gpio_request' in order
 to request the corresponding pin to be prepared by the pinctrl subsystem
 before any gpio usage.
 
@@ -553,21 +553,13 @@ either NULL or the label associated with that GPIO when it was requested.
 
 Platform Support
 ----------------
-To support this framework, a platform's Kconfig will "select" either
-ARCH_REQUIRE_GPIOLIB or ARCH_WANT_OPTIONAL_GPIOLIB
-and arrange that its <asm/gpio.h> includes <asm-generic/gpio.h> and defines
-three functions: gpio_get_value(), gpio_set_value(), and gpio_cansleep().
+To force-enable this framework, a platform's Kconfig will "select" GPIOLIB,
+else it is up to the user to configure support for GPIO.
 
 It may also provide a custom value for ARCH_NR_GPIOS, so that it better
 reflects the number of GPIOs in actual use on that platform, without
 wasting static table space.  (It should count both built-in/SoC GPIOs and
 also ones on GPIO expanders.
-
-ARCH_REQUIRE_GPIOLIB means that the gpiolib code will always get compiled
-into the kernel on that architecture.
-
-ARCH_WANT_OPTIONAL_GPIOLIB means the gpiolib code defaults to off and the user
-can enable it and build it into the kernel optionally.
 
 If neither of these options are selected, the platform does not support
 GPIOs through GPIO-lib and the code cannot be enabled by the user.
@@ -751,9 +743,6 @@ requested using gpio_request():
 	int gpio_export_link(struct device *dev, const char *name,
 		unsigned gpio)
 
-	/* change the polarity of a GPIO node in sysfs */
-	int gpio_sysfs_set_active_low(unsigned gpio, int value);
-
 After a kernel driver requests a GPIO, it may only be made available in
 the sysfs interface by gpio_export().  The driver can control whether the
 signal direction may change.  This helps drivers prevent userspace code
@@ -767,9 +756,3 @@ After the GPIO has been exported, gpio_export_link() allows creating
 symlinks from elsewhere in sysfs to the GPIO sysfs node.  Drivers can
 use this to provide the interface under their own device in sysfs with
 a descriptive name.
-
-Drivers can use gpio_sysfs_set_active_low() to hide GPIO line polarity
-differences between boards from user space.  This only affects the
-sysfs interface.  Polarity change can be done both before and after
-gpio_export(), and previously enabled poll(2) support for either
-rising or falling edge will be reconfigured to follow this setting.

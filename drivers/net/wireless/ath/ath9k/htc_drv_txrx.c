@@ -494,7 +494,7 @@ static void ath9k_htc_tx_process(struct ath9k_htc_priv *priv,
 		if (txs->ts_flags & ATH9K_HTC_TXSTAT_SGI)
 			rate->flags |= IEEE80211_TX_RC_SHORT_GI;
 	} else {
-		if (cur_conf->chandef.chan->band == IEEE80211_BAND_5GHZ)
+		if (cur_conf->chandef.chan->band == NL80211_BAND_5GHZ)
 			rate->idx += 4; /* No CCK rates */
 	}
 
@@ -641,7 +641,7 @@ static struct sk_buff* ath9k_htc_tx_get_packet(struct ath9k_htc_priv *priv,
 
 void ath9k_htc_txstatus(struct ath9k_htc_priv *priv, void *wmi_event)
 {
-	struct wmi_event_txstatus *txs = (struct wmi_event_txstatus *)wmi_event;
+	struct wmi_event_txstatus *txs = wmi_event;
 	struct __wmi_event_txstatus *__txs;
 	struct sk_buff *skb;
 	struct ath9k_htc_tx_event *tx_pend;
@@ -684,7 +684,7 @@ void ath9k_htc_txstatus(struct ath9k_htc_priv *priv, void *wmi_event)
 void ath9k_htc_txep(void *drv_priv, struct sk_buff *skb,
 		    enum htc_endpoint_id ep_id, bool txok)
 {
-	struct ath9k_htc_priv *priv = (struct ath9k_htc_priv *) drv_priv;
+	struct ath9k_htc_priv *priv = drv_priv;
 	struct ath9k_htc_tx_ctl *tx_ctl;
 	struct sk_buff_head *epid_queue;
 
@@ -752,9 +752,9 @@ static void ath9k_htc_tx_cleanup_queue(struct ath9k_htc_priv *priv,
 	}
 }
 
-void ath9k_htc_tx_cleanup_timer(unsigned long data)
+void ath9k_htc_tx_cleanup_timer(struct timer_list *t)
 {
-	struct ath9k_htc_priv *priv = (struct ath9k_htc_priv *) data;
+	struct ath9k_htc_priv *priv = from_timer(priv, t, tx.cleanup_timer);
 	struct ath_common *common = ath9k_hw_common(priv->ah);
 	struct ath9k_htc_tx_event *event, *tmp;
 	struct sk_buff *skb;
@@ -872,14 +872,7 @@ u32 ath9k_htc_calcrxfilter(struct ath9k_htc_priv *priv)
 	if (priv->rxfilter & FIF_PROBE_REQ)
 		rfilt |= ATH9K_RX_FILTER_PROBEREQ;
 
-	/*
-	 * Set promiscuous mode when FIF_PROMISC_IN_BSS is enabled for station
-	 * mode interface or when in monitor mode. AP mode does not need this
-	 * since it receives all in-BSS frames anyway.
-	 */
-	if (((ah->opmode != NL80211_IFTYPE_AP) &&
-	     (priv->rxfilter & FIF_PROMISC_IN_BSS)) ||
-	    ah->is_monitoring)
+	if (ah->is_monitoring)
 		rfilt |= ATH9K_RX_FILTER_PROM;
 
 	if (priv->rxfilter & FIF_CONTROL)
@@ -936,11 +929,12 @@ void ath9k_host_rx_init(struct ath9k_htc_priv *priv)
 static inline void convert_htc_flag(struct ath_rx_status *rx_stats,
 				   struct ath_htc_rx_status *rxstatus)
 {
-	rx_stats->flag = 0;
+	rx_stats->enc_flags = 0;
+	rx_stats->bw = RATE_INFO_BW_20;
 	if (rxstatus->rs_flags & ATH9K_RX_2040)
-		rx_stats->flag |= RX_FLAG_40MHZ;
+		rx_stats->bw = RATE_INFO_BW_40;
 	if (rxstatus->rs_flags & ATH9K_RX_GI)
-		rx_stats->flag |= RX_FLAG_SHORT_GI;
+		rx_stats->enc_flags |= RX_ENC_FLAG_SHORT_GI;
 }
 
 static void rx_status_htc_to_ath(struct ath_rx_status *rx_stats,
@@ -1109,7 +1103,7 @@ requeue:
 void ath9k_htc_rxep(void *drv_priv, struct sk_buff *skb,
 		    enum htc_endpoint_id ep_id)
 {
-	struct ath9k_htc_priv *priv = (struct ath9k_htc_priv *)drv_priv;
+	struct ath9k_htc_priv *priv = drv_priv;
 	struct ath_hw *ah = priv->ah;
 	struct ath_common *common = ath9k_hw_common(ah);
 	struct ath9k_htc_rxbuf *rxbuf = NULL, *tmp_buf = NULL;

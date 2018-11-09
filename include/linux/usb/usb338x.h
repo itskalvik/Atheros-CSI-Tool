@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * USB 338x super/high/full speed USB device controller.
  * Unlike many such controllers, this one talks PCI.
@@ -43,6 +44,10 @@
 #define     IN_ENDPOINT_TYPE                    12
 #define     OUT_ENDPOINT_ENABLE                 10
 #define     OUT_ENDPOINT_TYPE                    8
+#define USB3380_EP_CFG_MASK_IN ((0x3 << IN_ENDPOINT_TYPE) | \
+				BIT(IN_ENDPOINT_ENABLE))
+#define USB3380_EP_CFG_MASK_OUT ((0x3 << OUT_ENDPOINT_TYPE) | \
+				BIT(OUT_ENDPOINT_ENABLE))
 
 struct usb338x_usb_ext_regs {
 	u32     usbclass;

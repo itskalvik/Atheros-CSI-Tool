@@ -50,14 +50,14 @@
 
 /* Our blacklist flags */
 enum {
-	SPI_BLIST_NOIUS = 0x1,
+	SPI_BLIST_NOIUS = (__force blist_flags_t)0x1,
 };
 
 /* blacklist table, modelled on scsi_devinfo.c */
 static struct {
 	char *vendor;
 	char *model;
-	unsigned flags;
+	blist_flags_t flags;
 } spi_static_device_list[] __initdata = {
 	{"HP", "Ultrium 3-SCSI", SPI_BLIST_NOIUS },
 	{"IBM", "ULTRIUM-TD3", SPI_BLIST_NOIUS },
@@ -123,25 +123,21 @@ static int spi_execute(struct scsi_device *sdev, const void *cmd,
 {
 	int i, result;
 	unsigned char sense[SCSI_SENSE_BUFFERSIZE];
+	struct scsi_sense_hdr sshdr_tmp;
+
+	if (!sshdr)
+		sshdr = &sshdr_tmp;
 
 	for(i = 0; i < DV_RETRIES; i++) {
-		result = scsi_execute(sdev, cmd, dir, buffer, bufflen,
-				      sense, DV_TIMEOUT, /* retries */ 1,
+		result = scsi_execute(sdev, cmd, dir, buffer, bufflen, sense,
+				      sshdr, DV_TIMEOUT, /* retries */ 1,
 				      REQ_FAILFAST_DEV |
 				      REQ_FAILFAST_TRANSPORT |
 				      REQ_FAILFAST_DRIVER,
-				      NULL);
-		if (driver_byte(result) & DRIVER_SENSE) {
-			struct scsi_sense_hdr sshdr_tmp;
-			if (!sshdr)
-				sshdr = &sshdr_tmp;
-
-			if (scsi_normalize_sense(sense, SCSI_SENSE_BUFFERSIZE,
-						 sshdr)
-			    && sshdr->sense_key == UNIT_ATTENTION)
-				continue;
-		}
-		break;
+				      0, NULL);
+		if (!(driver_byte(result) & DRIVER_SENSE) ||
+		    sshdr->sense_key != UNIT_ATTENTION)
+			break;
 	}
 	return result;
 }
@@ -225,9 +221,11 @@ static int spi_device_configure(struct transport_container *tc,
 {
 	struct scsi_device *sdev = to_scsi_device(dev);
 	struct scsi_target *starget = sdev->sdev_target;
-	unsigned bflags = scsi_get_device_flags_keyed(sdev, &sdev->inquiry[8],
-						      &sdev->inquiry[16],
-						      SCSI_DEVINFO_SPI);
+	blist_flags_t bflags;
+
+	bflags = scsi_get_device_flags_keyed(sdev, &sdev->inquiry[8],
+					     &sdev->inquiry[16],
+					     SCSI_DEVINFO_SPI);
 
 	/* Populate the target capability fields with the values
 	 * gleaned from the device inquiry */
@@ -786,10 +784,10 @@ spi_dv_retrain(struct scsi_device *sdev, u8 *buffer, u8 *ptr,
 		 * IU, then QAS (if we can control them), then finally
 		 * fall down the periods */
 		if (i->f->set_iu && spi_iu(starget)) {
-			starget_printk(KERN_ERR, starget, "Domain Validation Disabing Information Units\n");
+			starget_printk(KERN_ERR, starget, "Domain Validation Disabling Information Units\n");
 			DV_SET(iu, 0);
 		} else if (i->f->set_qas && spi_qas(starget)) {
-			starget_printk(KERN_ERR, starget, "Domain Validation Disabing Quick Arbitration and Selection\n");
+			starget_printk(KERN_ERR, starget, "Domain Validation Disabling Quick Arbitration and Selection\n");
 			DV_SET(qas, 0);
 		} else {
 			newperiod = spi_period(starget);

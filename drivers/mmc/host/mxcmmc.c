@@ -307,9 +307,6 @@ static int mxcmci_setup_data(struct mxcmci_host *host, struct mmc_data *data)
 	enum dma_transfer_direction slave_dirn;
 	int i, nents;
 
-	if (data->flags & MMC_DATA_STREAM)
-		nob = 0xffff;
-
 	host->data = data;
 	data->bytes_xfered = 0;
 
@@ -605,11 +602,7 @@ static int mxcmci_push(struct mxcmci_host *host, void *_buf, int bytes)
 		mxcmci_writel(host, cpu_to_le32(tmp), MMC_REG_BUFFER_ACCESS);
 	}
 
-	stat = mxcmci_poll_status(host, STATUS_BUF_WRITE_RDY);
-	if (stat)
-		return stat;
-
-	return 0;
+	return mxcmci_poll_status(host, STATUS_BUF_WRITE_RDY);
 }
 
 static int mxcmci_transfer_data(struct mxcmci_host *host)
@@ -687,6 +680,9 @@ static void mxcmci_data_done(struct mxcmci_host *host, unsigned int stat)
 	data_error = mxcmci_finish_data(host, stat);
 
 	spin_unlock_irqrestore(&host->lock, flags);
+
+	if (data_error)
+		return;
 
 	mxcmci_read_response(host, stat);
 	host->cmd = NULL;
@@ -967,10 +963,9 @@ static bool filter(struct dma_chan *chan, void *param)
 	return true;
 }
 
-static void mxcmci_watchdog(unsigned long data)
+static void mxcmci_watchdog(struct timer_list *t)
 {
-	struct mmc_host *mmc = (struct mmc_host *)data;
-	struct mxcmci_host *host = mmc_priv(mmc);
+	struct mxcmci_host *host = from_timer(host, t, watchdog);
 	struct mmc_request *req = host->req;
 	unsigned int stat = mxcmci_readl(host, MMC_REG_STATUS);
 
@@ -1021,8 +1016,10 @@ static int mxcmci_probe(struct platform_device *pdev)
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	irq = platform_get_irq(pdev, 0);
-	if (irq < 0)
-		return -EINVAL;
+	if (irq < 0) {
+		dev_err(&pdev->dev, "failed to get IRQ: %d\n", irq);
+		return irq;
+	}
 
 	mmc = mmc_alloc_host(sizeof(*host), &pdev->dev);
 	if (!mmc)
@@ -1072,12 +1069,12 @@ static int mxcmci_probe(struct platform_device *pdev)
 
 	if (pdata)
 		dat3_card_detect = pdata->dat3_card_detect;
-	else if (!(mmc->caps & MMC_CAP_NONREMOVABLE)
+	else if (mmc_card_is_removable(mmc)
 			&& !of_property_read_bool(pdev->dev.of_node, "cd-gpios"))
 		dat3_card_detect = true;
 
 	ret = mmc_regulator_get_supply(mmc);
-	if (ret == -EPROBE_DEFER)
+	if (ret)
 		goto out_free;
 
 	if (!mmc->ocr_avail) {
@@ -1105,8 +1102,13 @@ static int mxcmci_probe(struct platform_device *pdev)
 		goto out_free;
 	}
 
-	clk_prepare_enable(host->clk_per);
-	clk_prepare_enable(host->clk_ipg);
+	ret = clk_prepare_enable(host->clk_per);
+	if (ret)
+		goto out_free;
+
+	ret = clk_prepare_enable(host->clk_ipg);
+	if (ret)
+		goto out_clk_per_put;
 
 	mxcmci_softreset(host);
 
@@ -1162,9 +1164,7 @@ static int mxcmci_probe(struct platform_device *pdev)
 			goto out_free_dma;
 	}
 
-	init_timer(&host->watchdog);
-	host->watchdog.function = &mxcmci_watchdog;
-	host->watchdog.data = (unsigned long)mmc;
+	timer_setup(&host->watchdog, mxcmci_watchdog, 0);
 
 	mmc_add_host(mmc);
 
@@ -1175,8 +1175,9 @@ out_free_dma:
 		dma_release_channel(host->dma);
 
 out_clk_put:
-	clk_disable_unprepare(host->clk_per);
 	clk_disable_unprepare(host->clk_ipg);
+out_clk_per_put:
+	clk_disable_unprepare(host->clk_per);
 
 out_free:
 	mmc_free_host(mmc);
@@ -1219,10 +1220,17 @@ static int __maybe_unused mxcmci_resume(struct device *dev)
 {
 	struct mmc_host *mmc = dev_get_drvdata(dev);
 	struct mxcmci_host *host = mmc_priv(mmc);
+	int ret;
 
-	clk_prepare_enable(host->clk_per);
-	clk_prepare_enable(host->clk_ipg);
-	return 0;
+	ret = clk_prepare_enable(host->clk_per);
+	if (ret)
+		return ret;
+
+	ret = clk_prepare_enable(host->clk_ipg);
+	if (ret)
+		clk_disable_unprepare(host->clk_per);
+
+	return ret;
 }
 
 static SIMPLE_DEV_PM_OPS(mxcmci_pm_ops, mxcmci_suspend, mxcmci_resume);

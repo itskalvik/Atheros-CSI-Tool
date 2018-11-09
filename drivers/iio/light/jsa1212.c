@@ -271,7 +271,6 @@ static const struct iio_chan_spec jsa1212_channels[] = {
 };
 
 static const struct iio_info jsa1212_info = {
-	.driver_module		= THIS_MODULE,
 	.read_raw		= &jsa1212_read_raw,
 };
 
@@ -324,9 +323,6 @@ static int jsa1212_probe(struct i2c_client *client,
 	struct iio_dev *indio_dev;
 	struct regmap *regmap;
 	int ret;
-
-	if (!i2c_check_functionality(client->adapter, I2C_FUNC_SMBUS_BYTE_DATA))
-		return -ENODEV;
 
 	indio_dev = devm_iio_device_alloc(&client->dev, sizeof(*data));
 	if (!indio_dev)
@@ -457,7 +453,6 @@ static struct i2c_driver jsa1212_driver = {
 	.driver = {
 		.name	= JSA1212_DRIVER_NAME,
 		.pm	= JSA1212_PM_OPS,
-		.owner	= THIS_MODULE,
 		.acpi_match_table = ACPI_PTR(jsa1212_acpi_match),
 	},
 	.probe		= jsa1212_probe,

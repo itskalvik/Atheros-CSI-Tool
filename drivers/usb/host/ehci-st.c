@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * ST EHCI driver
  *
@@ -6,10 +7,6 @@
  * Author: Peter Griffin <peter.griffin@linaro.org>
  *
  * Derived from ehci-platform.c
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  */
 
 #include <linux/clk.h>
@@ -54,7 +51,6 @@ static int st_ehci_platform_reset(struct usb_hcd *hcd)
 	struct platform_device *pdev = to_platform_device(hcd->self.controller);
 	struct usb_ehci_pdata *pdata = dev_get_platdata(&pdev->dev);
 	struct ehci_hcd *ehci = hcd_to_ehci(hcd);
-	int retval;
 	u32 threshold;
 
 	/* Set EHCI packet buffer IN/OUT threshold to 128 bytes */
@@ -62,11 +58,7 @@ static int st_ehci_platform_reset(struct usb_hcd *hcd)
 	writel(threshold, hcd->regs + AHB2STBUS_INSREG01);
 
 	ehci->caps = hcd->regs + pdata->caps_offset;
-	retval = ehci_setup(hcd);
-	if (retval)
-		return retval;
-
-	return 0;
+	return ehci_setup(hcd);
 }
 
 static int st_ehci_platform_power_on(struct platform_device *dev)
@@ -211,7 +203,8 @@ static int st_ehci_platform_probe(struct platform_device *dev)
 		priv->clk48 = NULL;
 	}
 
-	priv->pwr = devm_reset_control_get_optional(&dev->dev, "power");
+	priv->pwr =
+		devm_reset_control_get_optional_shared(&dev->dev, "power");
 	if (IS_ERR(priv->pwr)) {
 		err = PTR_ERR(priv->pwr);
 		if (err == -EPROBE_DEFER)
@@ -219,7 +212,8 @@ static int st_ehci_platform_probe(struct platform_device *dev)
 		priv->pwr = NULL;
 	}
 
-	priv->rst = devm_reset_control_get_optional(&dev->dev, "softreset");
+	priv->rst =
+		devm_reset_control_get_optional_shared(&dev->dev, "softreset");
 	if (IS_ERR(priv->rst)) {
 		err = PTR_ERR(priv->rst);
 		if (err == -EPROBE_DEFER)
@@ -292,8 +286,7 @@ static int st_ehci_suspend(struct device *dev)
 {
 	struct usb_hcd *hcd = dev_get_drvdata(dev);
 	struct usb_ehci_pdata *pdata = dev_get_platdata(dev);
-	struct platform_device *pdev =
-		container_of(dev, struct platform_device, dev);
+	struct platform_device *pdev = to_platform_device(dev);
 	bool do_wakeup = device_may_wakeup(dev);
 	int ret;
 
@@ -313,8 +306,7 @@ static int st_ehci_resume(struct device *dev)
 {
 	struct usb_hcd *hcd = dev_get_drvdata(dev);
 	struct usb_ehci_pdata *pdata = dev_get_platdata(dev);
-	struct platform_device *pdev =
-		container_of(dev, struct platform_device, dev);
+	struct platform_device *pdev = to_platform_device(dev);
 	int err;
 
 	pinctrl_pm_select_default_state(dev);

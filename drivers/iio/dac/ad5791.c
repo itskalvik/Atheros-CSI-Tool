@@ -340,7 +340,6 @@ static int ad5791_write_raw(struct iio_dev *indio_dev,
 static const struct iio_info ad5791_info = {
 	.read_raw = &ad5791_read_raw,
 	.write_raw = &ad5791_write_raw,
-	.driver_module = THIS_MODULE,
 };
 
 static int ad5791_probe(struct spi_device *spi)
@@ -461,7 +460,6 @@ MODULE_DEVICE_TABLE(spi, ad5791_id);
 static struct spi_driver ad5791_driver = {
 	.driver = {
 		   .name = "ad5791",
-		   .owner = THIS_MODULE,
 		   },
 	.probe = ad5791_probe,
 	.remove = ad5791_remove,

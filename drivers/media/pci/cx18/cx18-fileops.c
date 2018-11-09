@@ -15,11 +15,6 @@
  *  but WITHOUT ANY WARRANTY; without even the implied warranty of
  *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
- *  02111-1307  USA
  */
 
 #include "cx18-driver.h"
@@ -49,8 +44,7 @@ int cx18_claim_stream(struct cx18_open_id *id, int type)
 
 	/* Nothing should ever try to directly claim the IDX stream */
 	if (type == CX18_ENC_STREAM_TYPE_IDX) {
-		CX18_WARN("MPEG Index stream cannot be claimed "
-			  "directly, but something tried.\n");
+		CX18_WARN("MPEG Index stream cannot be claimed directly, but something tried.\n");
 		return -EINVAL;
 	}
 
@@ -690,9 +684,9 @@ int cx18_v4l2_mmap(struct file *file, struct vm_area_struct *vma)
 	return -EINVAL;
 }
 
-void cx18_vb_timeout(unsigned long data)
+void cx18_vb_timeout(struct timer_list *t)
 {
-	struct cx18_stream *s = (struct cx18_stream *)data;
+	struct cx18_stream *s = from_timer(s, t, vb_timeout);
 	struct cx18_videobuf_buffer *buf;
 	unsigned long flags;
 
@@ -728,8 +722,7 @@ void cx18_stop_capture(struct cx18_open_id *id, int gop_end)
 			/* Stop internal use associated VBI and IDX streams */
 			if (test_bit(CX18_F_S_STREAMING, &s_vbi->s_flags) &&
 			    !test_bit(CX18_F_S_APPL_IO, &s_vbi->s_flags)) {
-				CX18_DEBUG_INFO("close stopping embedded VBI "
-						"capture\n");
+				CX18_DEBUG_INFO("close stopping embedded VBI capture\n");
 				cx18_stop_v4l2_encode_stream(s_vbi, 0);
 			}
 			if (test_bit(CX18_F_S_STREAMING, &s_idx->s_flags)) {

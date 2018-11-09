@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __NOUVEAU_OS_H__
 #define __NOUVEAU_OS_H__
 
@@ -24,21 +25,13 @@
 #include <linux/power_supply.h>
 #include <linux/clk.h>
 #include <linux/regulator/consumer.h>
+#include <linux/agp_backend.h>
+#include <linux/reset.h>
+#include <linux/iommu.h>
+#include <linux/of_device.h>
 
 #include <asm/unaligned.h>
 
-#ifndef ioread32_native
-#ifdef __BIG_ENDIAN
-#define ioread16_native ioread16be
-#define iowrite16_native iowrite16be
-#define ioread32_native  ioread32be
-#define iowrite32_native iowrite32be
-#else /* def __BIG_ENDIAN */
-#define ioread16_native ioread16
-#define iowrite16_native iowrite16
-#define ioread32_native  ioread32
-#define iowrite32_native iowrite32
-#endif /* def __BIG_ENDIAN else */
-#endif /* !ioread32_native */
-
+#include <soc/tegra/fuse.h>
+#include <soc/tegra/pmc.h>
 #endif

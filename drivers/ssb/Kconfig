@@ -32,7 +32,7 @@ config SSB_BLOCKIO
 
 config SSB_PCIHOST_POSSIBLE
 	bool
-	depends on SSB && (PCI = y || PCI = SSB)
+	depends on SSB && (PCI = y || PCI = SSB) && PCI_DRIVERS_LEGACY
 	default y
 
 config SSB_PCIHOST
@@ -77,6 +77,16 @@ config SSB_SDIOHOST
 	help
 	  Support for a Sonics Silicon Backplane on top
 	  of a SDIO device.
+
+	  If unsure, say N
+
+config SSB_HOST_SOC
+	bool "Support for SSB bus on SoC"
+	depends on SSB && BCM47XX_NVRAM
+	select SSB_SPROM
+	help
+	  Host interface for a SSB directly mapped into memory. This is
+	  for some Broadcom SoCs from the BCM47xx and BCM53xx lines.
 
 	  If unsure, say N
 

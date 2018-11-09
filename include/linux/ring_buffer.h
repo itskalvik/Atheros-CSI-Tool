@@ -1,7 +1,7 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _LINUX_RING_BUFFER_H
 #define _LINUX_RING_BUFFER_H
 
-#include <linux/kmemcheck.h>
 #include <linux/mm.h>
 #include <linux/seq_file.h>
 #include <linux/poll.h>
@@ -13,9 +13,7 @@ struct ring_buffer_iter;
  * Don't refer to this struct directly, use functions below.
  */
 struct ring_buffer_event {
-	kmemcheck_bitfield_begin(bitfield);
 	u32		type_len:5, time_delta:27;
-	kmemcheck_bitfield_end(bitfield);
 
 	u32		array[];
 };
@@ -154,8 +152,8 @@ ring_buffer_swap_cpu(struct ring_buffer *buffer_a,
 }
 #endif
 
-int ring_buffer_empty(struct ring_buffer *buffer);
-int ring_buffer_empty_cpu(struct ring_buffer *buffer, int cpu);
+bool ring_buffer_empty(struct ring_buffer *buffer);
+bool ring_buffer_empty_cpu(struct ring_buffer *buffer, int cpu);
 
 void ring_buffer_record_disable(struct ring_buffer *buffer);
 void ring_buffer_record_enable(struct ring_buffer *buffer);
@@ -185,7 +183,7 @@ size_t ring_buffer_page_len(void *page);
 
 
 void *ring_buffer_alloc_read_page(struct ring_buffer *buffer, int cpu);
-void ring_buffer_free_read_page(struct ring_buffer *buffer, void *data);
+void ring_buffer_free_read_page(struct ring_buffer *buffer, int cpu, void *data);
 int ring_buffer_read_page(struct ring_buffer *buffer, void **data_page,
 			  size_t len, int cpu, int full);
 
@@ -197,5 +195,11 @@ int ring_buffer_print_page_header(struct trace_seq *s);
 enum ring_buffer_flags {
 	RB_FL_OVERWRITE		= 1 << 0,
 };
+
+#ifdef CONFIG_RING_BUFFER
+int trace_rb_cpu_prepare(unsigned int cpu, struct hlist_node *node);
+#else
+#define trace_rb_cpu_prepare	NULL
+#endif
 
 #endif /* _LINUX_RING_BUFFER_H */

@@ -38,6 +38,10 @@
 
 #include <linux/omap-dma.h>
 
+#ifdef CONFIG_ARCH_OMAP1
+#include <mach/soc.h>
+#endif
+
 /*
  * MAX_LOGICAL_DMA_CH_COUNT: the maximum number of logical DMA
  * channels that an instance of the SDMA IP block can support.  Used
@@ -1312,16 +1316,14 @@ static int omap_system_dma_probe(struct platform_device *pdev)
 	enable_1510_mode	= d->dev_caps & ENABLE_1510_MODE;
 
 	dma_chan = devm_kcalloc(&pdev->dev, dma_lch_count,
-				sizeof(struct omap_dma_lch), GFP_KERNEL);
-	if (!dma_chan) {
-		dev_err(&pdev->dev, "%s: kzalloc fail\n", __func__);
+				sizeof(*dma_chan), GFP_KERNEL);
+	if (!dma_chan)
 		return -ENOMEM;
-	}
-
 
 	if (dma_omap2plus()) {
-		dma_linked_lch = kzalloc(sizeof(struct dma_link_info) *
-						dma_lch_count, GFP_KERNEL);
+		dma_linked_lch = kcalloc(dma_lch_count,
+					 sizeof(*dma_linked_lch),
+					 GFP_KERNEL);
 		if (!dma_linked_lch) {
 			ret = -ENOMEM;
 			goto exit_dma_lch_fail;

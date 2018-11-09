@@ -1,17 +1,18 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * If TRACE_SYSTEM is defined, that will be the directory created
  * in the ftrace directory under /sys/kernel/tracing/events/<system>
  *
  * The define_trace.h below will also look for a file name of
  * TRACE_SYSTEM.h where TRACE_SYSTEM is what is defined here.
- * In this case, it would look for sample.h
+ * In this case, it would look for sample-trace.h
  *
  * If the header name will be different than the system name
  * (as in this case), then you can override the header name that
  * define_trace.h will look up by defining TRACE_INCLUDE_FILE
  *
  * This file is called trace-events-sample.h but we want the system
- * to be called "sample". Therefore we must define the name of this
+ * to be called "sample-trace". Therefore we must define the name of this
  * file:
  *
  * #define TRACE_INCLUDE_FILE trace-events-sample
@@ -95,7 +96,7 @@
  *         __entry->bar.x = y;
 
  *   __array: There are three fields (type, name, size). The type is the
- *         type of elements in teh array, the name is the name of the array.
+ *         type of elements in the array, the name is the name of the array.
  *         size is the number of items in the array (not the total size).
  *
  *         __array( char, foo, 10) is the same as saying: char foo[10];
@@ -106,13 +107,13 @@
  *
  *         memcpy(__entry->foo, bar, 10);
  *
- *   __dynamic_array: This is similar to array, but can vary is size from
+ *   __dynamic_array: This is similar to array, but can vary its size from
  *         instance to instance of the tracepoint being called.
  *         Like __array, this too has three elements (type, name, size);
  *         type is the type of the element, name is the name of the array.
  *         The size is different than __array. It is not a static number,
  *         but the algorithm to figure out the length of the array for the
- *         specific instance of tracepoint. Again, size is the numebr of
+ *         specific instance of tracepoint. Again, size is the number of
  *         items in the array, not the total length in bytes.
  *
  *         __dynamic_array( int, foo, bar) is similar to: int foo[bar];
@@ -125,9 +126,9 @@
  *         Notice, that "__entry" is not needed here.
  *
  *   __string: This is a special kind of __dynamic_array. It expects to
- *         have a nul terminated character array passed to it (it allows
+ *         have a null terminated character array passed to it (it allows
  *         for NULL too, which would be converted into "(null)"). __string
- *         takes two paramenter (name, src), where name is the name of
+ *         takes two parameter (name, src), where name is the name of
  *         the string saved, and src is the string to copy into the
  *         ring buffer.
  *
@@ -354,7 +355,7 @@ TRACE_EVENT_CONDITION(foo_bar_with_cond,
 	TP_printk("foo %s %d", __get_str(foo), __entry->bar)
 );
 
-void foo_bar_reg(void);
+int foo_bar_reg(void);
 void foo_bar_unreg(void);
 
 /*
@@ -444,7 +445,7 @@ DECLARE_EVENT_CLASS(foo_template,
 
 /*
  * Here's a better way for the previous samples (except, the first
- * exmaple had more fields and could not be used here).
+ * example had more fields and could not be used here).
  */
 DEFINE_EVENT(foo_template, foo_with_template_simple,
 	TP_PROTO(const char *foo, int bar),

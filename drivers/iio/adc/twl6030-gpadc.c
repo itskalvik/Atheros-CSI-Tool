@@ -33,7 +33,7 @@
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/of_platform.h>
-#include <linux/i2c/twl.h>
+#include <linux/mfd/twl.h>
 #include <linux/iio/iio.h>
 #include <linux/iio/sysfs.h>
 
@@ -843,7 +843,6 @@ static const struct iio_chan_spec twl6032_gpadc_iio_channels[] = {
 
 static const struct iio_info twl6030_gpadc_iio_info = {
 	.read_raw = &twl6030_gpadc_read_raw,
-	.driver_module = THIS_MODULE,
 };
 
 static const struct twl6030_gpadc_platform_data twl6030_pdata = {
@@ -875,6 +874,7 @@ static const struct of_device_id of_twl6030_match_tbl[] = {
 	},
 	{ /* end */ }
 };
+MODULE_DEVICE_TABLE(of, of_twl6030_match_tbl);
 
 static int twl6030_gpadc_probe(struct platform_device *pdev)
 {

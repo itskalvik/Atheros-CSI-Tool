@@ -1,14 +1,5 @@
-/* Copyright (c) 2010, 2014 The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- */
+// SPDX-License-Identifier: GPL-2.0
+/* Copyright (c) 2010, 2014 The Linux Foundation. All rights reserved.  */
 
 #include <linux/init.h>
 
@@ -70,20 +61,27 @@ static const struct hv_ops hvc_dcc_get_put_ops = {
 
 static int __init hvc_dcc_console_init(void)
 {
+	int ret;
+
 	if (!hvc_dcc_check())
 		return -ENODEV;
 
-	hvc_instantiate(0, 0, &hvc_dcc_get_put_ops);
-	return 0;
+	/* Returns -1 if error */
+	ret = hvc_instantiate(0, 0, &hvc_dcc_get_put_ops);
+
+	return ret < 0 ? -ENODEV : 0;
 }
 console_initcall(hvc_dcc_console_init);
 
 static int __init hvc_dcc_init(void)
 {
+	struct hvc_struct *p;
+
 	if (!hvc_dcc_check())
 		return -ENODEV;
 
-	hvc_alloc(0, 0, &hvc_dcc_get_put_ops, 128);
-	return 0;
+	p = hvc_alloc(0, 0, &hvc_dcc_get_put_ops, 128);
+
+	return PTR_ERR_OR_ZERO(p);
 }
 device_initcall(hvc_dcc_init);

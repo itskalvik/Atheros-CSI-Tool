@@ -117,7 +117,6 @@ static int ad8366_write_raw(struct iio_dev *indio_dev,
 static const struct iio_info ad8366_info = {
 	.read_raw = &ad8366_read_raw,
 	.write_raw = &ad8366_write_raw,
-	.driver_module = THIS_MODULE,
 };
 
 #define AD8366_CHAN(_channel) {				\
@@ -195,11 +194,11 @@ static const struct spi_device_id ad8366_id[] = {
 	{"ad8366", 0},
 	{}
 };
+MODULE_DEVICE_TABLE(spi, ad8366_id);
 
 static struct spi_driver ad8366_driver = {
 	.driver = {
 		.name	= KBUILD_MODNAME,
-		.owner	= THIS_MODULE,
 	},
 	.probe		= ad8366_probe,
 	.remove		= ad8366_remove,

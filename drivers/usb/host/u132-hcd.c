@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
 * Host Controller Driver for the Elan Digital Systems U132 adapter
 *
@@ -6,11 +7,6 @@
 *
 * Author and Maintainer - Tony Olech - Elan Digital Systems
 * tony.olech@elandigitalsystems.com
-*
-* This program is free software;you can redistribute it and/or
-* modify it under the terms of the GNU General Public License as
-* published by the Free Software Foundation, version 2.
-*
 *
 * This driver was written by Tony Olech(tony.olech@elandigitalsystems.com)
 * based on various USB host drivers in the 2.6.15 linux kernel
@@ -73,7 +69,7 @@ MODULE_LICENSE("GPL");
 #define INT_MODULE_PARM(n, v) static int n = v;module_param(n, int, 0444)
 INT_MODULE_PARM(testing, 0);
 /* Some boards misreport power switching/overcurrent*/
-static bool distrust_firmware = 1;
+static bool distrust_firmware = true;
 module_param(distrust_firmware, bool, 0);
 MODULE_PARM_DESC(distrust_firmware, "true to distrust firmware power/overcurren"
 	"t setup");
@@ -1309,13 +1305,9 @@ static void u132_hcd_ring_work_scheduler(struct work_struct *work)
 		u132_ring_put_kref(u132, ring);
 		return;
 	} else if (ring->curr_endp) {
-		struct u132_endp *last_endp = ring->curr_endp;
-		struct list_head *scan;
-		struct list_head *head = &last_endp->endp_ring;
+		struct u132_endp *endp, *last_endp = ring->curr_endp;
 		unsigned long wakeup = 0;
-		list_for_each(scan, head) {
-			struct u132_endp *endp = list_entry(scan,
-				struct u132_endp, endp_ring);
+		list_for_each_entry(endp, &last_endp->endp_ring, endp_ring) {
 			if (endp->queue_next == endp->queue_last) {
 			} else if ((endp->delayed == 0)
 				|| time_after_eq(jiffies, endp->jiffies)) {
@@ -1542,11 +1534,8 @@ static int u132_periodic_reinit(struct u132 *u132)
 		(fit ^ FIT) | u132->hc_fminterval);
 	if (retval)
 		return retval;
-	retval = u132_write_pcimem(u132, periodicstart,
-		((9 * fi) / 10) & 0x3fff);
-	if (retval)
-		return retval;
-	return 0;
+	return u132_write_pcimem(u132, periodicstart,
+	       ((9 * fi) / 10) & 0x3fff);
 }
 
 static char *hcfs2string(int state)
@@ -2247,9 +2236,8 @@ static int u132_urb_enqueue(struct usb_hcd *hcd, struct urb *urb,
 {
 	struct u132 *u132 = hcd_to_u132(hcd);
 	if (irqs_disabled()) {
-		if (__GFP_WAIT & mem_flags) {
-			printk(KERN_ERR "invalid context for function that migh"
-				"t sleep\n");
+		if (gfpflags_allow_blocking(mem_flags)) {
+			printk(KERN_ERR "invalid context for function that might sleep\n");
 			return -EINVAL;
 		}
 	}
@@ -2397,14 +2385,12 @@ static int u132_urb_enqueue(struct usb_hcd *hcd, struct urb *urb,
 static int dequeue_from_overflow_chain(struct u132 *u132,
 	struct u132_endp *endp, struct urb *urb)
 {
-	struct list_head *scan;
-	struct list_head *head = &endp->urb_more;
-	list_for_each(scan, head) {
-		struct u132_urbq *urbq = list_entry(scan, struct u132_urbq,
-			urb_more);
+	struct u132_urbq *urbq;
+
+	list_for_each_entry(urbq, &endp->urb_more, urb_more) {
 		if (urbq->urb == urb) {
 			struct usb_hcd *hcd = u132_to_hcd(u132);
-			list_del(scan);
+			list_del(&urbq->urb_more);
 			endp->queue_size -= 1;
 			urb->error_count = 0;
 			usb_hcd_giveback_urb(hcd, urb, 0);
@@ -2701,28 +2687,18 @@ static int u132_roothub_setportfeature(struct u132 *u132, u16 wValue,
 	if (wIndex == 0 || wIndex > u132->num_ports) {
 		return -EINVAL;
 	} else {
-		int retval;
 		int port_index = wIndex - 1;
 		struct u132_port *port = &u132->port[port_index];
 		port->Status &= ~(1 << wValue);
 		switch (wValue) {
 		case USB_PORT_FEAT_SUSPEND:
-			retval = u132_write_pcimem(u132,
-				roothub.portstatus[port_index], RH_PS_PSS);
-			if (retval)
-				return retval;
-			return 0;
+			return u132_write_pcimem(u132,
+			       roothub.portstatus[port_index], RH_PS_PSS);
 		case USB_PORT_FEAT_POWER:
-			retval = u132_write_pcimem(u132,
-				roothub.portstatus[port_index], RH_PS_PPS);
-			if (retval)
-				return retval;
-			return 0;
+			return u132_write_pcimem(u132,
+			       roothub.portstatus[port_index], RH_PS_PPS);
 		case USB_PORT_FEAT_RESET:
-			retval = u132_roothub_portreset(u132, port_index);
-			if (retval)
-				return retval;
-			return 0;
+			return u132_roothub_portreset(u132, port_index);
 		default:
 			return -EPIPE;
 		}
@@ -2737,7 +2713,6 @@ static int u132_roothub_clearportfeature(struct u132 *u132, u16 wValue,
 	} else {
 		int port_index = wIndex - 1;
 		u32 temp;
-		int retval;
 		struct u132_port *port = &u132->port[port_index];
 		port->Status &= ~(1 << wValue);
 		switch (wValue) {
@@ -2773,11 +2748,8 @@ static int u132_roothub_clearportfeature(struct u132 *u132, u16 wValue,
 		default:
 			return -EPIPE;
 		}
-		retval = u132_write_pcimem(u132, roothub.portstatus[port_index],
-			 temp);
-		if (retval)
-			return retval;
-		return 0;
+		return u132_write_pcimem(u132, roothub.portstatus[port_index],
+		       temp);
 	}
 }
 
@@ -2965,7 +2937,7 @@ static int u132_bus_resume(struct usb_hcd *hcd)
 #define u132_bus_suspend NULL
 #define u132_bus_resume NULL
 #endif
-static struct hc_driver u132_hc_driver = {
+static const struct hc_driver u132_hc_driver = {
 	.description = hcd_name,
 	.hcd_priv_size = sizeof(struct u132),
 	.irq = NULL,

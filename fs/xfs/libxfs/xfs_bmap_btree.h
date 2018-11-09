@@ -25,14 +25,6 @@ struct xfs_inode;
 struct xfs_trans;
 
 /*
- * Extent state and extent format macros.
- */
-#define XFS_EXTFMT_INODE(x)	\
-	(xfs_sb_version_hasextflgbit(&((x)->i_mount->m_sb)) ? \
-		XFS_EXTFMT_HASSTATE : XFS_EXTFMT_NOSTATE)
-#define ISUNWRITTEN(x)	((x)->br_state == XFS_EXT_UNWRITTEN)
-
-/*
  * Btree block header size depends on a superblock flag.
  */
 #define XFS_BMBT_BLOCK_LEN(mp) \
@@ -106,25 +98,11 @@ struct xfs_trans;
  */
 extern void xfs_bmdr_to_bmbt(struct xfs_inode *, xfs_bmdr_block_t *, int,
 			struct xfs_btree_block *, int);
-extern void xfs_bmbt_get_all(xfs_bmbt_rec_host_t *r, xfs_bmbt_irec_t *s);
-extern xfs_filblks_t xfs_bmbt_get_blockcount(xfs_bmbt_rec_host_t *r);
-extern xfs_fsblock_t xfs_bmbt_get_startblock(xfs_bmbt_rec_host_t *r);
-extern xfs_fileoff_t xfs_bmbt_get_startoff(xfs_bmbt_rec_host_t *r);
-extern xfs_exntst_t xfs_bmbt_get_state(xfs_bmbt_rec_host_t *r);
 
+void xfs_bmbt_disk_set_all(struct xfs_bmbt_rec *r, struct xfs_bmbt_irec *s);
 extern xfs_filblks_t xfs_bmbt_disk_get_blockcount(xfs_bmbt_rec_t *r);
 extern xfs_fileoff_t xfs_bmbt_disk_get_startoff(xfs_bmbt_rec_t *r);
-
-extern void xfs_bmbt_set_all(xfs_bmbt_rec_host_t *r, xfs_bmbt_irec_t *s);
-extern void xfs_bmbt_set_allf(xfs_bmbt_rec_host_t *r, xfs_fileoff_t o,
-			xfs_fsblock_t b, xfs_filblks_t c, xfs_exntst_t v);
-extern void xfs_bmbt_set_blockcount(xfs_bmbt_rec_host_t *r, xfs_filblks_t v);
-extern void xfs_bmbt_set_startblock(xfs_bmbt_rec_host_t *r, xfs_fsblock_t v);
-extern void xfs_bmbt_set_startoff(xfs_bmbt_rec_host_t *r, xfs_fileoff_t v);
-extern void xfs_bmbt_set_state(xfs_bmbt_rec_host_t *r, xfs_exntst_t v);
-
-extern void xfs_bmbt_disk_set_allf(xfs_bmbt_rec_t *r, xfs_fileoff_t o,
-			xfs_fsblock_t b, xfs_filblks_t c, xfs_exntst_t v);
+extern void xfs_bmbt_disk_get_all(xfs_bmbt_rec_t *r, xfs_bmbt_irec_t *s);
 
 extern void xfs_bmbt_to_bmdr(struct xfs_mount *, struct xfs_btree_block *, int,
 			xfs_bmdr_block_t *, int);
@@ -139,5 +117,19 @@ extern int xfs_bmbt_change_owner(struct xfs_trans *tp, struct xfs_inode *ip,
 
 extern struct xfs_btree_cur *xfs_bmbt_init_cursor(struct xfs_mount *,
 		struct xfs_trans *, struct xfs_inode *, int);
+
+/*
+ * Check that the extent does not contain an invalid unwritten extent flag.
+ */
+static inline bool xfs_bmbt_validate_extent(struct xfs_mount *mp, int whichfork,
+		struct xfs_bmbt_irec *irec)
+{
+	if (irec->br_state == XFS_EXT_NORM)
+		return true;
+	if (whichfork == XFS_DATA_FORK &&
+	    xfs_sb_version_hasextflgbit(&mp->m_sb))
+		return true;
+	return false;
+}
 
 #endif	/* __XFS_BMAP_BTREE_H__ */

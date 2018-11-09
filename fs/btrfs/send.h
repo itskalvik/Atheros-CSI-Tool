@@ -22,8 +22,8 @@
 #define BTRFS_SEND_STREAM_MAGIC "btrfs-stream"
 #define BTRFS_SEND_STREAM_VERSION 1
 
-#define BTRFS_SEND_BUF_SIZE (1024 * 64)
-#define BTRFS_SEND_READ_SIZE (1024 * 48)
+#define BTRFS_SEND_BUF_SIZE SZ_64K
+#define BTRFS_SEND_READ_SIZE (48 * SZ_1K)
 
 enum btrfs_tlv_type {
 	BTRFS_TLV_U8,
@@ -130,5 +130,5 @@ enum {
 #define BTRFS_SEND_A_MAX (__BTRFS_SEND_A_MAX - 1)
 
 #ifdef __KERNEL__
-long btrfs_ioctl_send(struct file *mnt_file, void __user *arg);
+long btrfs_ioctl_send(struct file *mnt_file, struct btrfs_ioctl_send_args *arg);
 #endif

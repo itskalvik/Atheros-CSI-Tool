@@ -734,7 +734,7 @@ static unsigned int ar_search_last_active_buffer(struct ar_context *ctx,
 	__le16 res_count, next_res_count;
 
 	i = ar_first_buffer_index(ctx);
-	res_count = ACCESS_ONCE(ctx->descriptors[i].res_count);
+	res_count = READ_ONCE(ctx->descriptors[i].res_count);
 
 	/* A buffer that is not yet completely filled must be the last one. */
 	while (i != last && res_count == 0) {
@@ -742,8 +742,7 @@ static unsigned int ar_search_last_active_buffer(struct ar_context *ctx,
 		/* Peek at the next descriptor. */
 		next_i = ar_next_buffer_index(i);
 		rmb(); /* read descriptors in order */
-		next_res_count = ACCESS_ONCE(
-				ctx->descriptors[next_i].res_count);
+		next_res_count = READ_ONCE(ctx->descriptors[next_i].res_count);
 		/*
 		 * If the next descriptor is still empty, we must stop at this
 		 * descriptor.
@@ -759,8 +758,7 @@ static unsigned int ar_search_last_active_buffer(struct ar_context *ctx,
 			if (MAX_AR_PACKET_SIZE > PAGE_SIZE && i != last) {
 				next_i = ar_next_buffer_index(next_i);
 				rmb();
-				next_res_count = ACCESS_ONCE(
-					ctx->descriptors[next_i].res_count);
+				next_res_count = READ_ONCE(ctx->descriptors[next_i].res_count);
 				if (next_res_count != cpu_to_le16(PAGE_SIZE))
 					goto next_buffer_is_active;
 			}
@@ -2278,9 +2276,10 @@ static int ohci_enable(struct fw_card *card,
 	u32 lps, version, irqs;
 	int i, ret;
 
-	if (software_reset(ohci)) {
+	ret = software_reset(ohci);
+	if (ret < 0) {
 		ohci_err(ohci, "failed to reset ohci card\n");
-		return -EBUSY;
+		return ret;
 	}
 
 	/*
@@ -2811,7 +2810,7 @@ static int handle_ir_buffer_fill(struct context *context,
 	u32 buffer_dma;
 
 	req_count = le16_to_cpu(last->req_count);
-	res_count = le16_to_cpu(ACCESS_ONCE(last->res_count));
+	res_count = le16_to_cpu(READ_ONCE(last->res_count));
 	completed = req_count - res_count;
 	buffer_dma = le32_to_cpu(last->data_address);
 
@@ -3675,6 +3674,11 @@ static int pci_probe(struct pci_dev *dev,
 
 	reg_write(ohci, OHCI1394_IsoXmitIntMaskSet, ~0);
 	ohci->it_context_support = reg_read(ohci, OHCI1394_IsoXmitIntMaskSet);
+	/* JMicron JMB38x often shows 0 at first read, just ignore it */
+	if (!ohci->it_context_support) {
+		ohci_notice(ohci, "overriding IsoXmitIntMask\n");
+		ohci->it_context_support = 0xf;
+	}
 	reg_write(ohci, OHCI1394_IsoXmitIntMaskClear, ~0);
 	ohci->it_context_mask = ohci->it_context_support;
 	ohci->n_it = hweight32(ohci->it_context_mask);

@@ -292,7 +292,6 @@ static const struct attribute_group cm32181_attribute_group = {
 };
 
 static const struct iio_info cm32181_info = {
-	.driver_module		= THIS_MODULE,
 	.read_raw		= &cm32181_read_raw,
 	.write_raw		= &cm32181_write_raw,
 	.attrs			= &cm32181_attribute_group,
@@ -353,12 +352,12 @@ static const struct of_device_id cm32181_of_match[] = {
 	{ .compatible = "capella,cm32181" },
 	{ }
 };
+MODULE_DEVICE_TABLE(of, cm32181_of_match);
 
 static struct i2c_driver cm32181_driver = {
 	.driver = {
 		.name	= "cm32181",
 		.of_match_table = of_match_ptr(cm32181_of_match),
-		.owner	= THIS_MODULE,
 	},
 	.id_table       = cm32181_id,
 	.probe		= cm32181_probe,

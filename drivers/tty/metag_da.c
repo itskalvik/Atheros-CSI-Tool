@@ -1,12 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  *  dashtty.c - tty driver for Dash channels interface.
  *
  *  Copyright (C) 2007,2008,2012 Imagination Technologies
- *
- * This file is subject to the terms and conditions of the GNU General Public
- * License.  See the file COPYING in the main directory of this archive
- * for more details.
- *
  */
 
 #include <linux/atomic.h>
@@ -309,7 +305,7 @@ static int put_data(void *arg)
 /*
  *	This gets called every DA_TTY_POLL and polls the channels for data
  */
-static void dashtty_timer(unsigned long ignored)
+static void dashtty_timer(struct timer_list *poll_timer)
 {
 	int channel;
 
@@ -323,12 +319,12 @@ static void dashtty_timer(unsigned long ignored)
 	if (channel >= 0)
 		fetch_data(channel);
 
-	mod_timer_pinned(&poll_timer, jiffies + DA_TTY_POLL);
+	mod_timer(poll_timer, jiffies + DA_TTY_POLL);
 }
 
 static void add_poll_timer(struct timer_list *poll_timer)
 {
-	setup_timer(poll_timer, dashtty_timer, 0);
+	timer_setup(poll_timer, dashtty_timer, TIMER_PINNED);
 	poll_timer->expires = jiffies + DA_TTY_POLL;
 
 	/*
@@ -461,7 +457,7 @@ static void dashtty_hangup(struct tty_struct *tty)
  * buffers. It is used to delay the expensive writeout until the writer has
  * stopped writing.
  */
-static void dashtty_put_timer(unsigned long ignored)
+static void dashtty_put_timer(struct timer_list *unused)
 {
 	if (atomic_read(&dashtty_xmit_cnt))
 		wake_up_interruptible(&dashtty_waitqueue);
@@ -603,7 +599,7 @@ static int __init dashtty_init(void)
 		complete(&dport->xmit_empty);
 	}
 
-	setup_timer(&put_timer, dashtty_put_timer, 0);
+	timer_setup(&put_timer, dashtty_put_timer, 0);
 
 	init_waitqueue_head(&dashtty_waitqueue);
 	dashtty_thread = kthread_create(put_data, NULL, "ttyDA");
@@ -640,25 +636,7 @@ err_destroy_ports:
 	put_tty_driver(channel_driver);
 	return ret;
 }
-
-static void dashtty_exit(void)
-{
-	int nport;
-	struct dashtty_port *dport;
-
-	del_timer_sync(&put_timer);
-	kthread_stop(dashtty_thread);
-	del_timer_sync(&poll_timer);
-	tty_unregister_driver(channel_driver);
-	for (nport = 0; nport < NUM_TTY_CHANNELS; nport++) {
-		dport = &dashtty_ports[nport];
-		tty_port_destroy(&dport->port);
-	}
-	put_tty_driver(channel_driver);
-}
-
-module_init(dashtty_init);
-module_exit(dashtty_exit);
+device_initcall(dashtty_init);
 
 #ifdef CONFIG_DA_CONSOLE
 
