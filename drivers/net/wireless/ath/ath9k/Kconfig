@@ -25,6 +25,7 @@ config ATH9K
 	select LEDS_CLASS
 	select NEW_LEDS
 	select ATH9K_COMMON
+	select ATH_USER_REGD
 	---help---
 	  This module adds support for wireless adapters based on
 	  Atheros IEEE 802.11n AR5008, AR9001 and AR9002 family

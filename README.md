@@ -4,7 +4,6 @@ sudo apt-get install git libncurses5-dev libncursesw5-dev libelf-dev libnl-3-dev
 git clone https://github.com/kdkalvik/Atheros-CSI-Tool.git
 cd Atheros-CSI-Tool
 make menuconfig
-wget -O - https://gist.github.com/renaudcerrato/02de8b2e8dc013bc71326defd2ef062c/raw/a2db325e520e6442c8c12f7599d64ac1b7596a3e/402-ath_regd_optional.patch | patch -p1 -b
 make -j16
 make modules
 sudo make modules_install
