@@ -1,3 +1,6 @@
+## Original Repo
+https://github.com/xieyaxiongfly/Atheros-CSI-Tool
+
 ## Compile the kernel
 ```
 sudo apt-get install git libncurses5-dev libncursesw5-dev libelf-dev libnl-3-dev libssl-dev  
