@@ -1,7 +1,7 @@
-## Original Repo
-https://github.com/xieyaxiongfly/Atheros-CSI-Tool
+## Description
+Linux kernel 4.15.0 with ath9k driver modified to support the Atheros-CSI-Tool developed by xieyaxiongfly https://github.com/xieyaxiongfly/Atheros-CSI-Tool. 
 
-## Compile the kernel
+## kernel Compilation Instructions
 ```
 sudo apt-get install git libncurses5-dev libncursesw5-dev libelf-dev libnl-3-dev libssl-dev  
 git clone https://github.com/kdkalvik/Atheros-CSI-Tool.git
@@ -14,19 +14,14 @@ sudo make install
 sudo reboot
 ```
 
-##Linux kernel
-This file was moved to Documentation/admin-guide/README.rst
-
-Please notice that there are several guides for kernel developers and users.
-These guides can be rendered in a number of formats, like HTML and PDF.
-
-In order to build the documentation, use ``make htmldocs`` or
-``make pdfdocs``.
-
-There are various text files in the Documentation/ subdirectory,
-several of them using the Restructured Text markup notation.
-See Documentation/00-INDEX for a list of what is contained in each file.
-
-Please read the Documentation/process/changes.rst file, as it contains the
-requirements for building and running the kernel, and information about
-the problems which may result by upgrading your kernel.
+Make sure the following kernel build flags are enabled for the CSI tool to work properly. 
+```
+CONFIG_ATH9K=m
+CONFIG_ATH9K_AHB=y
+CONFIG_ATH9K_DEBUGFS=y
+CONFIG_ATH9K_STATION_STATISTICS=y
+CONFIG_ATH9K_WOW=y
+CONFIG_ATH9K_CHANNEL_CONTEXT=y
+CONFIG_ATH9K_HTC=m
+CONFIG_ATH9K_HTC_DEBUGFS=y
+```
